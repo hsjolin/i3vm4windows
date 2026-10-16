@@ -50,6 +50,19 @@ public sealed class WorkspaceManagerTests
     }
 
     [Fact]
+    public void AddWindowTo_PlacesWindowInGivenWorkspace_NotActive()
+    {
+        var manager = new WorkspaceManager();
+        manager.AddWindow(100);
+
+        manager.AddWindowTo(3, 200);
+
+        Assert.Equal(new[] { 100L }, manager.Get(1).WindowHandles);
+        Assert.Equal(new[] { 200L }, manager.Get(3).WindowHandles);
+        Assert.Equal(1, manager.ActiveIndex);
+    }
+
+    [Fact]
     public void RemoveWindow_SearchesAllWorkspaces()
     {
         var manager = new WorkspaceManager();

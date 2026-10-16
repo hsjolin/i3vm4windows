@@ -41,6 +41,12 @@ public sealed class WorkspaceManager
 
     public void AddWindow(long windowHandle) => _engine.AddWindow(Active, windowHandle);
 
+    /// <summary>
+    /// Adds a window to the workspace with the given number, creating it on
+    /// first use, regardless of which workspace is active.
+    /// </summary>
+    public void AddWindowTo(int index, long windowHandle) => _engine.AddWindow(Get(index), windowHandle);
+
     /// <summary>Removes the window from whichever workspace owns it.</summary>
     public bool RemoveWindow(long windowHandle)
     {

@@ -35,6 +35,19 @@ after the next rescan (Win+Y or automatic).
 Note: registering Win-based hotkeys overrides some Windows shell shortcuts
 (for example Win+Left/Right snapping and Win+number taskbar activation).
 
+## State persistence
+
+Between runs the app remembers its state in `%APPDATA%\i3vm4windows\state.json`:
+
+- the active workspace of each monitor, keyed by display device name, and
+- which workspace each managed window was last tiled on.
+
+Windows are identified by their process image path and window title, with a
+fallback to the process image alone. A window that reopens with a matching
+identity is placed back on its remembered workspace (hidden if that workspace
+is not active); unknown windows join the active workspace as usual. Up to 300
+placements are kept. State is saved whenever it changes and on exit.
+
 ## Building
 
 Requires the .NET 10 SDK on Windows:

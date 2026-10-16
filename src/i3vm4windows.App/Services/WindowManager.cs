@@ -39,12 +39,14 @@ internal sealed class WindowManager : IDisposable
     private readonly DispatcherTimer _refreshTimer;
     private readonly uint _ownProcessId;
     private readonly Win32.WinEventDelegate _winEventDelegate;
+    private AppState? _state;
     private IntPtr _winEventHook;
     private bool _disposed;
 
     public WindowManager()
     {
         _ownProcessId = (uint)Environment.ProcessId;
+        _state = StateStore.Load();
         _refreshTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
             Interval = TimeSpan.FromMilliseconds(150),
@@ -81,6 +83,7 @@ internal sealed class WindowManager : IDisposable
         ReassignWindows();
         DiscoverNewWindows();
         ApplyLayout();
+        SaveState();
     }
 
     public void ApplyLayout()
@@ -153,6 +156,7 @@ internal sealed class WindowManager : IDisposable
             Win32.ShowWindow(new IntPtr(handle), Win32.SW_SHOW);
 
         ApplyLayout();
+        SaveState();
 
         if (workspaces.Active.FocusedWindowHandle is { } focused)
             Win32.SetForegroundWindow(new IntPtr(focused));
@@ -174,6 +178,7 @@ internal sealed class WindowManager : IDisposable
             Win32.SetForegroundWindow(new IntPtr(next));
 
         ApplyLayout();
+        SaveState();
     }
 
     /// <summary>
@@ -211,6 +216,7 @@ internal sealed class WindowManager : IDisposable
             target.Workspaces.Active.FocusedWindowHandle = focused;
 
         ApplyLayout();
+        SaveState();
 
         if (target.Workspaces.Active.FocusedWindowHandle is { } next)
             Win32.SetForegroundWindow(new IntPtr(next));
@@ -223,6 +229,7 @@ internal sealed class WindowManager : IDisposable
 
         _disposed = true;
         _refreshTimer.Stop();
+        SaveState();
 
         if (_winEventHook != IntPtr.Zero)
         {
@@ -281,9 +288,18 @@ internal sealed class WindowManager : IDisposable
         {
             current.Add(info.Handle);
             if (_monitors.TryGetValue(info.Handle, out var state))
+            {
                 state.Info = info;
+            }
             else
-                _monitors[info.Handle] = new MonitorState(info);
+            {
+                state = new MonitorState(info);
+                if (_state?.ActiveWorkspaceByMonitor.TryGetValue(info.DeviceName, out var active) == true &&
+                    active is >= 1 and <= 9)
+                    state.Workspaces.SwitchTo(active);
+
+                _monitors[info.Handle] = state;
+            }
         }
 
         foreach (var disconnected in _monitors.Keys.Where(h => !current.Contains(h)).ToList())
@@ -316,13 +332,90 @@ internal sealed class WindowManager : IDisposable
             if (!_managedHandles.Contains(handle) && IsTileable(hwnd))
             {
                 var state = MonitorStateForWindow(hwnd);
-                state.Workspaces.AddWindow(handle);
+                var (exePath, title) = GetWindowIdentity(hwnd);
+                var remembered = _state?.ResolveWorkspace(exePath, title);
+
+                if (remembered is >= 1 and <= 9)
+                {
+                    state.Workspaces.AddWindowTo(remembered.Value, handle);
+                    if (state.Workspaces.ActiveIndex != remembered.Value)
+                        Win32.ShowWindow(hwnd, Win32.SW_HIDE);
+                }
+                else
+                {
+                    state.Workspaces.AddWindow(handle);
+                }
+
                 _managedHandles.Add(handle);
                 _windowOwners[handle] = state;
             }
 
             return true;
         }, IntPtr.Zero);
+    }
+
+    /// <summary>
+    /// Snapshots the current state: active workspace per monitor and the
+    /// workspace of every managed window, keyed by a persistent identity.
+    /// </summary>
+    private AppState CaptureState()
+    {
+        var state = new AppState();
+
+        foreach (var monitor in _monitors.Values)
+            state.ActiveWorkspaceByMonitor[monitor.Info.DeviceName] = monitor.Workspaces.ActiveIndex;
+
+        foreach (var (handle, owner) in _windowOwners)
+        {
+            if (owner.Workspaces.FindOwner(handle) is not { } workspace ||
+                !int.TryParse(workspace.Name, out var index))
+                continue;
+
+            var (exePath, title) = GetWindowIdentity(new IntPtr(handle));
+            state.Windows.Add(new WindowState(exePath, title, index));
+        }
+
+        // Windows that were not seen again this session stay remembered, so
+        // they are recognized whenever they reopen.
+        state.MergeRemembered(_state);
+        return state;
+    }
+
+    private void SaveState()
+    {
+        if (_monitors.Count == 0)
+            return;
+
+        _state = CaptureState();
+        StateStore.Save(_state);
+    }
+
+    private static (string ExePath, string Title) GetWindowIdentity(IntPtr hwnd)
+    {
+        var title = new StringBuilder(512);
+        Win32.GetWindowText(hwnd, title, title.Capacity);
+        return (GetProcessImagePath(hwnd) ?? string.Empty, title.ToString());
+    }
+
+    private static string? GetProcessImagePath(IntPtr hwnd)
+    {
+        Win32.GetWindowThreadProcessId(hwnd, out var processId);
+        var process = Win32.OpenProcess(Win32.PROCESS_QUERY_LIMITED_INFORMATION, false, processId);
+        if (process == IntPtr.Zero)
+            return null;
+
+        try
+        {
+            var path = new StringBuilder(1024);
+            var size = (uint)path.Capacity;
+            return Win32.QueryFullProcessImageName(process, 0, path, ref size)
+                ? path.ToString()
+                : null;
+        }
+        finally
+        {
+            Win32.CloseHandle(process);
+        }
     }
 
     /// <summary>
