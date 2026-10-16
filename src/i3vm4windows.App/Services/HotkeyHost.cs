@@ -7,11 +7,12 @@ namespace i3vm4windows.App.Services;
 
 /// <summary>
 /// Owns a message-only window that receives WM_HOTKEY messages from
-/// RegisterHotKey registrations. Combinations that are already owned by
-/// another process (typically the Windows shell, e.g. Win+number taskbar
-/// activation) are intercepted with a low-level keyboard hook on a
-/// dedicated thread, so slow work on the UI thread can never delay key
-/// interception past the OS hook timeout.
+/// RegisterHotKey registrations, and a low-level keyboard hook on a
+/// dedicated thread that gives the app full control of the Win key: while
+/// it is held, known combinations dispatch their actions and everything
+/// else is consumed, so shell shortcuts (Start menu, Win+L, Win+D, ...)
+/// never leak through. RegisterHotKey remains as a fallback for the rare
+/// case of the hook being removed after OS hook timeouts.
 /// </summary>
 internal sealed class HotkeyHost : IDisposable
 {
@@ -30,7 +31,7 @@ internal sealed class HotkeyHost : IDisposable
     // Used only on the hook thread.
     private Win32.LowLevelKeyboardProc? _hookProc;
     private IntPtr _llHook;
-    private bool _winComboConsumed;
+    private bool _winKeyDown;
 
     public void Start(Action<int> onHotkey)
     {
@@ -48,10 +49,14 @@ internal sealed class HotkeyHost : IDisposable
         _source.AddHook(WndProc);
         _dispatcher = _source.Dispatcher;
         _onHotkey = onHotkey;
+
+        // The hook owns the Win key even when RegisterHotKey succeeds for
+        // every combination.
+        EnsureHook();
     }
 
     /// <summary>
-    /// Registers a hotkey, falling back to a low-level keyboard hook when
+    /// Registers a hotkey, falling back to the low-level keyboard hook when
     /// another process already owns the combination.
     /// </summary>
     public bool Register(int id, Win32.Modifiers modifiers, Key key)
@@ -60,18 +65,14 @@ internal sealed class HotkeyHost : IDisposable
             throw new InvalidOperationException("Hotkey host has not been started.");
 
         var virtualKey = (uint)KeyInterop.VirtualKeyFromKey(key);
-        if (Win32.RegisterHotKey(_source.Handle, id, (uint)modifiers, virtualKey))
-        {
-            _registrations.Add((id, modifiers, virtualKey));
-            return true;
-        }
-
         lock (_lock)
         {
-            _hooked.Add((id, modifiers, virtualKey));
+            if (Win32.RegisterHotKey(_source.Handle, id, (uint)modifiers, virtualKey))
+                _registrations.Add((id, modifiers, virtualKey));
+            else
+                _hooked.Add((id, modifiers, virtualKey));
         }
 
-        EnsureHook();
         return true;
     }
 
@@ -131,21 +132,35 @@ internal sealed class HotkeyHost : IDisposable
             var data = System.Runtime.InteropServices.Marshal
                 .PtrToStructure<Win32.KBDLLHOOKSTRUCT>(lParam);
             var message = wParam.ToInt64();
+            var keyDown = message is Win32.WM_KEYDOWN or Win32.WM_SYSKEYDOWN;
+            var keyUp = message is Win32.WM_KEYUP or Win32.WM_SYSKEYUP;
 
-            if (message is Win32.WM_KEYDOWN or Win32.WM_SYSKEYDOWN &&
-                MatchHooked(data.vkCode) is { } id)
+            // Self-heal a stuck Win key (e.g. a missed release across a
+            // session switch) so normal typing is never swallowed.
+            if (_winKeyDown && !IsDown(Win32.VK_LWIN) && !IsDown(Win32.VK_RWIN))
+                _winKeyDown = false;
+
+            if (data.vkCode is Win32.VK_LWIN or Win32.VK_RWIN)
             {
-                // Swallow the Win key release too, or the Start menu opens.
-                _winComboConsumed = HeldModifiers().HasFlag(Win32.Modifiers.Win);
-                _dispatcher?.BeginInvoke(() => _onHotkey?.Invoke(id));
-                return new IntPtr(1);
+                if (keyDown)
+                {
+                    _winKeyDown = true;
+                }
+                else if (keyUp)
+                {
+                    // The app owns the Win key: the Start menu stays closed.
+                    _winKeyDown = false;
+                    return new IntPtr(1);
+                }
             }
-
-            if (message is Win32.WM_KEYUP or Win32.WM_SYSKEYUP &&
-                _winComboConsumed &&
-                (data.vkCode is Win32.VK_LWIN or Win32.VK_RWIN))
+            else if (_winKeyDown && !IsModifier(data.vkCode))
             {
-                _winComboConsumed = false;
+                // Every key pressed while Win is held belongs to the app:
+                // known combinations dispatch their action, anything else is
+                // consumed so no shell shortcut leaks through.
+                if (keyDown && MatchAny(data.vkCode) is { } id)
+                    _dispatcher?.BeginInvoke(() => _onHotkey?.Invoke(id));
+
                 return new IntPtr(1);
             }
         }
@@ -153,14 +168,14 @@ internal sealed class HotkeyHost : IDisposable
         return Win32.CallNextHookEx(_llHook, nCode, wParam, lParam);
     }
 
-    /// <summary>Finds the hooked combination whose modifiers are exactly the
-    /// ones currently held, e.g. Win+Shift+1 instead of Win+1.</summary>
-    private int? MatchHooked(uint virtualKey)
+    /// <summary>Finds the combination whose modifiers are exactly the ones
+    /// currently held, e.g. Win+Shift+1 instead of Win+1.</summary>
+    private int? MatchAny(uint virtualKey)
     {
         var held = HeldModifiers();
         lock (_lock)
         {
-            foreach (var (id, modifiers, vk) in _hooked)
+            foreach (var (id, modifiers, vk) in _registrations.Concat(_hooked))
             {
                 if (vk == virtualKey && held == modifiers)
                     return id;
@@ -169,6 +184,9 @@ internal sealed class HotkeyHost : IDisposable
 
         return null;
     }
+
+    private static bool IsModifier(uint virtualKey) =>
+        virtualKey is Win32.VK_SHIFT or Win32.VK_CONTROL or Win32.VK_MENU;
 
     private static Win32.Modifiers HeldModifiers()
     {

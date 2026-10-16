@@ -31,12 +31,11 @@ the workspace that is active there after the next rescan (Win+Y or automatic).
 | Win + X | Move the active workspace to the next monitor |
 | Win + Y | Rescan windows and re-apply layout |
 
-Note: registering Win-based hotkeys overrides some Windows shell shortcuts
-(for example Win+Left/Right snapping, Win+X and Win+number taskbar
-activation). Combinations another process already owns, typically the
-shell's own, are intercepted with a low-level keyboard hook on a dedicated
-thread instead, so the bindings work regardless of which process
-registered first.
+While the app runs, it owns the Win key completely: the Start menu never
+opens on a Win press, and every key pressed while Win is held either
+triggers one of the app's actions or is consumed — shell shortcuts such as
+Win+L, Win+D, Win+E and Win+number taskbar activation are disabled
+(Ctrl+Esc still opens the Start menu).
 
 Managed windows are locked to their tiled position: moving a window (or
 maximizing it) snaps back to its rectangle, and resizing is only allowed
