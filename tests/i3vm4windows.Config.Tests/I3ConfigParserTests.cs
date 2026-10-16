@@ -213,6 +213,34 @@ public class I3ConfigParserTests
     }
 
     [Fact]
+    public void Scratchpad_show_toggles_the_windows_its_criteria_target()
+    {
+        var config = I3ConfigParser.Parse(
+            """
+            bindsym Mod4+Tab [class="CASCADIA_HOSTING_WINDOW_CLASS"] scratchpad show
+            bindsym Mod4+Z [class="CASCADIA_HOSTING_WINDOW_CLASS" title="Ubuntu"] scratchpad show
+            """);
+
+        Assert.Equal(2, config.Bindings.Count);
+        Assert.All(config.Bindings, b => Assert.Equal(ConfigAction.ScratchpadShow, b.Action));
+        Assert.All(config.Bindings, b => Assert.NotNull(b.Rule));
+        Assert.True(config.Bindings[0].Rule!.Matches("CASCADIA_HOSTING_WINDOW_CLASS", "Ubuntu"));
+        Assert.False(config.Bindings[0].Rule!.Matches("Chrome_WidgetWin_1", "Ubuntu"));
+        Assert.True(config.Bindings[1].Rule!.Matches("CASCADIA_HOSTING_WINDOW_CLASS", "Ubuntu"));
+        Assert.False(config.Bindings[1].Rule!.Matches("CASCADIA_HOSTING_WINDOW_CLASS", "something else"));
+        Assert.Empty(config.Warnings);
+    }
+
+    [Fact]
+    public void Scratchpad_show_without_criteria_warns()
+    {
+        var config = I3ConfigParser.Parse("bindsym Mod4+Tab scratchpad show");
+
+        Assert.Empty(config.Bindings);
+        Assert.Single(config.Warnings);
+    }
+
+    [Fact]
     public void Release_bindings_and_bindcode_produce_warnings()
     {
         var config = I3ConfigParser.Parse("""

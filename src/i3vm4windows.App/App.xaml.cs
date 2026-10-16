@@ -157,6 +157,10 @@ public partial class App : System.Windows.Application
             case ConfigAction.FloatingToggle:
                 _windowManager.ToggleFloating();
                 break;
+            case ConfigAction.ScratchpadShow:
+                if (binding.Rule is { } rule)
+                    _windowManager.ToggleScratchpad(rule);
+                break;
         }
     }
 

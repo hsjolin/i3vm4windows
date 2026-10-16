@@ -96,24 +96,51 @@ public static class I3ConfigParser
             return;
         }
 
+        if (!TryParseCriteria(tokens, ref index, out var rule, warnings, line))
+            return;
+
+        var command = tokens[(index + 1)..].Select(t => t.ToLowerInvariant()).ToArray();
+        if (command.Length == 0)
+        {
+            warnings.Add($"for_window without a command: {line}");
+            return;
+        }
+
+        switch (command)
+        {
+            case ["floating", "enable"]:
+                rules.Add(rule!);
+                break;
+            default:
+                warnings.Add($"Unsupported for_window command: {line}");
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Parses a [class="..." title="..."] criteria section starting at
+    /// <paramref name="index"/>; on success the index ends on the token
+    /// that closes the bracket and the rule carries the expressions.
+    /// </summary>
+    private static bool TryParseCriteria(
+        string[] tokens,
+        ref int index,
+        out WindowRule? rule,
+        List<string> warnings,
+        string line)
+    {
+        rule = null;
         var criteria = tokens[index];
         while (!criteria.EndsWith(']'))
         {
             index++;
             if (index >= tokens.Length)
             {
-                warnings.Add($"Unterminated for_window criteria: {line}");
-                return;
+                warnings.Add($"Unterminated criteria: {line}");
+                return false;
             }
 
             criteria += " " + tokens[index];
-        }
-
-        var command = tokens[(index + 1)..];
-        if (command.Length == 0)
-        {
-            warnings.Add($"for_window without a command: {line}");
-            return;
         }
 
         Regex? classRegex = null;
@@ -132,19 +159,12 @@ public static class I3ConfigParser
 
         if (classRegex is null && titleRegex is null)
         {
-            warnings.Add($"for_window without class or title criteria: {line}");
-            return;
+            warnings.Add($"Criteria without class or title: {line}");
+            return false;
         }
 
-        switch (command)
-        {
-            case ["floating", "enable"]:
-                rules.Add(new WindowRule(classRegex, titleRegex));
-                break;
-            default:
-                warnings.Add($"Unsupported for_window command: {line}");
-                break;
-        }
+        rule = new WindowRule(classRegex, titleRegex);
+        return true;
     }
 
     private static Regex? TryCreateRegex(string pattern, List<string> warnings, string line)
@@ -180,7 +200,27 @@ public static class I3ConfigParser
 
         var keys = tokens[1];
         var original = tokens[2..];
-        var command = original.Select(t => t.ToLowerInvariant()).ToArray();
+
+        // A criteria prefix targets windows, e.g.
+        // [class="CASCADIA_HOSTING_WINDOW_CLASS"] scratchpad show.
+        var index = 0;
+        WindowRule? rule = null;
+        if (original.Length > 0 && original[0].StartsWith('['))
+        {
+            if (!TryParseCriteria(original, ref index, out rule, warnings, line))
+                return;
+
+            // The criteria ended on the token at index; the command follows.
+            index++;
+        }
+
+        var originalCommand = original[index..];
+        var command = originalCommand.Select(t => t.ToLowerInvariant()).ToArray();
+        if (command.Length == 0)
+        {
+            warnings.Add($"bindsym without a command: {line}");
+            return;
+        }
 
         if (!TryParseKeys(keys, out var modifiers, out var key))
         {
@@ -196,10 +236,21 @@ public static class I3ConfigParser
             return;
         }
 
-        if (TryParseCommand(command, original, out var action, out var parameter, out var commandText))
-            bindings[(modifiers, key)] = new Binding(modifiers, key, action, parameter, commandText);
-        else
+        if (!TryParseCommand(command, originalCommand, out var action, out var parameter, out var commandText))
+        {
             warnings.Add($"Unsupported command: {line}");
+            return;
+        }
+
+        // The stateless scratchpad toggle needs to know which window to act
+        // on; criteria are how the configuration expresses that.
+        if (action == ConfigAction.ScratchpadShow && rule is null)
+        {
+            warnings.Add($"scratchpad show needs window criteria: {line}");
+            return;
+        }
+
+        bindings[(modifiers, key)] = new Binding(modifiers, key, action, parameter, commandText, rule);
     }
 
     /// <summary>
@@ -311,6 +362,9 @@ public static class I3ConfigParser
                 return true;
             case ["floating", "toggle"]:
                 action = ConfigAction.FloatingToggle;
+                return true;
+            case ["scratchpad", "show"]:
+                action = ConfigAction.ScratchpadShow;
                 return true;
             case ["reload"]:
                 action = ConfigAction.Refresh;

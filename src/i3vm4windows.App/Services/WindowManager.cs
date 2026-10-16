@@ -203,6 +203,59 @@ internal sealed class WindowManager : IDisposable
         ApplyLayout();
     }
 
+    /// <summary>
+    /// Toggles the windows matching the rule, independent of workspaces: the
+    /// topmost visible one hides, and a hidden one shows and takes focus.
+    /// The state is the window's own visibility, so the toggle survives
+    /// restarts.
+    /// </summary>
+    public void ToggleScratchpad(WindowRule rule)
+    {
+        if (FindRuleMatch(rule, requireVisible: true) is { } visible)
+        {
+            Win32.ShowWindow(new IntPtr(visible), Win32.SW_HIDE);
+            return;
+        }
+
+        if (FindRuleMatch(rule, requireVisible: false) is { } hidden)
+        {
+            var hwnd = new IntPtr(hidden);
+            Win32.ShowWindow(hwnd, Win32.SW_SHOW);
+            Win32.SetForegroundWindow(hwnd);
+        }
+    }
+
+    /// <summary>The first window in z-order whose class and title match the
+    /// rule, visible or hidden as required. EnumWindows walks top-down, so
+    /// the visible pass finds the topmost match.</summary>
+    private long? FindRuleMatch(WindowRule rule, bool requireVisible)
+    {
+        long? found = null;
+        Win32.EnumWindows((hwnd, _) =>
+        {
+            if (!Win32.IsWindow(hwnd) || Win32.IsWindowVisible(hwnd) != requireVisible)
+                return true;
+
+            Win32.GetWindowThreadProcessId(hwnd, out var processId);
+            if (processId == _ownProcessId)
+                return true;
+
+            var className = new StringBuilder(256);
+            Win32.GetClassName(hwnd, className, className.Capacity);
+            var title = new StringBuilder(512);
+            Win32.GetWindowText(hwnd, title, title.Capacity);
+
+            if (rule.Matches(className.ToString(), title.ToString()))
+            {
+                found = hwnd.ToInt64();
+                return false;
+            }
+
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+
     public void CloseFocused()
     {
         if (_workspaces.ActiveOn(ActiveMonitor().DeviceName).FocusedWindowHandle is { } handle)

@@ -65,6 +65,16 @@ to move and resize freely where it stands, a floating window joins the
 tiling of the display it is on. Floating windows keep their place across
 workspace switches.
 
+Quake-style toggling (a terminal that shows and hides from any
+workspace) binds `[class="..." title="..."] scratchpad show`: the
+topmost visible window matching the criteria hides, and a hidden one
+shows and takes focus — the window's own visibility is the state, so
+the toggle survives restarts:
+
+```i3
+bindsym $mod+Tab [class="CASCADIA_HOSTING_WINDOW_CLASS"] scratchpad show
+```
+
 ## Default key bindings (v0.4)
 
 Workspaces are global and each is bound to the display it was created on;
