@@ -100,38 +100,15 @@ public sealed class WorkspaceManager
     }
 
     /// <summary>
-    /// Activates the workspace with the given number on the focused output:
-    /// a workspace that is bound to another output swaps with the workspace
-    /// that is active on the focused output, so every output keeps exactly
-    /// one active workspace. Workspaces that do not exist yet are created on
-    /// the focused output.
+    /// Activates the workspace with the given number on the output it is
+    /// bound to, never disturbing what other outputs show; focus follows the
+    /// workspace. Workspaces that do not exist yet are created on the
+    /// focused output.
     /// </summary>
     public SwitchResult SwitchTo(int index, string focusedOutput)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(index, 1);
-        var workspace = TryGet(index);
-        var focused = ActiveOn(focusedOutput);
-
-        if (workspace is not null &&
-            !string.Equals(workspace.OutputName, focusedOutput, StringComparison.OrdinalIgnoreCase))
-        {
-            var otherOutput = workspace.OutputName;
-            var otherPrevious = ActiveOn(otherOutput).Index;
-
-            workspace.OutputName = focusedOutput;
-            _activeByOutput[focusedOutput] = index;
-
-            focused.OutputName = otherOutput;
-            _activeByOutput[otherOutput] = focused.Index;
-
-            return new SwitchResult(new[]
-            {
-                new OutputSwitch(focusedOutput, focused.Index, index),
-                new OutputSwitch(otherOutput, otherPrevious, focused.Index),
-            });
-        }
-
-        var output = workspace?.OutputName ?? focusedOutput;
+        var output = TryGet(index)?.OutputName ?? focusedOutput;
         var previous = ActiveOn(output).Index;
         if (previous != index)
             _activeByOutput[output] = index;
@@ -141,9 +118,10 @@ public sealed class WorkspaceManager
     }
 
     /// <summary>
-    /// Swaps the workspace that is active on the source output with the
-    /// workspace that is active on the target output: each output keeps
-    /// exactly one active workspace, and no workspace changes number.
+    /// Moves the workspace that is active on the source output to the target
+    /// output and activates it there. The source output activates the
+    /// lowest-numbered workspace that remains bound to it, or a fresh one
+    /// when none remain; the target's previous workspace stays bound to it.
     /// </summary>
     public WorkspaceMoveResult? MoveActiveWorkspaceToOutput(string sourceOutput, string targetOutput)
     {
@@ -151,14 +129,17 @@ public sealed class WorkspaceManager
             return null;
 
         var moved = ActiveOn(sourceOutput);
-        var replacement = ActiveOn(targetOutput);
-
         moved.OutputName = targetOutput;
         _activeByOutput[targetOutput] = moved.Index;
 
-        replacement.OutputName = sourceOutput;
-        _activeByOutput[sourceOutput] = replacement.Index;
+        var replacement = _workspaces.Values
+            .Where(w => w.OutputName == sourceOutput)
+            .OrderBy(w => w.Index)
+            .FirstOrDefault();
+        if (replacement is null)
+            replacement = GetOrCreate(NextFreeIndex(), sourceOutput);
 
+        _activeByOutput[sourceOutput] = replacement.Index;
         return new WorkspaceMoveResult(moved.Index, sourceOutput, replacement.Index, targetOutput);
     }
 

@@ -22,13 +22,13 @@ the workspace that is active there after the next rescan (Win+Y or automatic).
 
 | Keys | Action |
 |---|---|
-| Win + 1 .. Win + 9 | Switch the focused display to workspace 1-9; when the workspace is bound to another display, the two displays swap their active workspaces |
+| Win + 1 .. Win + 9 | Switch to workspace 1-9 on the display it is bound to; focus follows there, and no other display changes |
 | Win + Shift + 1 .. 9 | Move focused window to workspace 1-9 (visible when that workspace is active on its display) |
 | Win + Left / Right | Focus previous / next window |
 | Win + Shift + Left / Right | Move focused window within its split |
 | Win + Enter | Toggle horizontal / vertical split orientation |
 | Win + Q | Close focused window |
-| Win + X | Swap the active workspace with the one on the next monitor |
+| Win + X | Move the active workspace to the next monitor |
 | Win + Y | Rescan windows and re-apply layout |
 
 Note: registering Win-based hotkeys overrides some Windows shell shortcuts
