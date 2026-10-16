@@ -644,6 +644,14 @@ internal sealed class WindowManager : IDisposable
         if (Win32.GetWindowText(hwnd, title, title.Capacity) == 0)
             return false;
 
+        // for_window rules decide first: matched windows are never managed,
+        // like i3's floating enable leaves a window outside the tiling.
+        foreach (var rule in _rules)
+        {
+            if (rule.Matches(className.ToString(), title.ToString()))
+                return false;
+        }
+
         if (Win32.DwmGetWindowAttribute(hwnd, Win32.DWMWA_CLOAKED, out var cloaked, sizeof(int)) == 0 &&
             cloaked != 0)
             return false;
