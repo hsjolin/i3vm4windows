@@ -29,6 +29,7 @@ after the next rescan (Win+Y or automatic).
 | Win + Shift + Left / Right | Move focused window within its split |
 | Win + Enter | Toggle horizontal / vertical split orientation |
 | Win + Q | Close focused window |
+| Win + X | Move the active workspace to the next monitor |
 | Win + Y | Rescan windows and re-apply layout |
 
 Note: registering Win-based hotkeys overrides some Windows shell shortcuts

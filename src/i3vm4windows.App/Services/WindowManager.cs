@@ -176,6 +176,46 @@ internal sealed class WindowManager : IDisposable
         ApplyLayout();
     }
 
+    /// <summary>
+    /// Moves all windows of the active workspace on the focused monitor to
+    /// the active workspace of the next monitor (ordered left to right,
+    /// wrapping around) and shows them there.
+    /// </summary>
+    public void MoveActiveWorkspaceToNextMonitor()
+    {
+        var monitors = _monitors.Values
+            .OrderBy(m => m.Info.WorkArea.X)
+            .ThenBy(m => m.Info.WorkArea.Y)
+            .ToList();
+        if (monitors.Count < 2)
+            return;
+
+        var source = ActiveMonitor();
+        var target = monitors[(monitors.IndexOf(source) + 1) % monitors.Count];
+
+        var handles = source.Workspaces.Active.WindowHandles.ToList();
+        if (handles.Count == 0)
+            return;
+
+        var focusedBefore = source.Workspaces.Active.FocusedWindowHandle;
+        foreach (var handle in handles)
+        {
+            source.Workspaces.RemoveWindow(handle);
+            target.Workspaces.AddWindow(handle);
+            Win32.ShowWindow(new IntPtr(handle), Win32.SW_SHOW);
+            _windowOwners[handle] = target;
+        }
+
+        // AddWindow re-points focus at each added window; keep the original one.
+        if (focusedBefore is { } focused && handles.Contains(focused))
+            target.Workspaces.Active.FocusedWindowHandle = focused;
+
+        ApplyLayout();
+
+        if (target.Workspaces.Active.FocusedWindowHandle is { } next)
+            Win32.SetForegroundWindow(new IntPtr(next));
+    }
+
     public void Dispose()
     {
         if (_disposed)

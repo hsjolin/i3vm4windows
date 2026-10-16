@@ -14,6 +14,7 @@ public partial class App : System.Windows.Application
     private const int HotkeyToggleOrientation = 5;
     private const int HotkeyCloseFocused = 6;
     private const int HotkeyRefresh = 7;
+    private const int HotkeyMoveWorkspaceToNextMonitor = 8;
     private const int HotkeySwitchWorkspaceBase = 100; // Win+1..9
     private const int HotkeyMoveToWorkspaceBase = 200; // Win+Shift+1..9
 
@@ -61,6 +62,7 @@ public partial class App : System.Windows.Application
         _hotkeyHost.Register(HotkeyToggleOrientation, Win32.Modifiers.Win, Key.Enter);
         _hotkeyHost.Register(HotkeyCloseFocused, Win32.Modifiers.Win, Key.Q);
         _hotkeyHost.Register(HotkeyRefresh, Win32.Modifiers.Win, Key.Y);
+        _hotkeyHost.Register(HotkeyMoveWorkspaceToNextMonitor, Win32.Modifiers.Win, Key.X);
 
         for (var i = 0; i < WorkspaceNumberKeys.Length; i++)
         {
@@ -97,6 +99,9 @@ public partial class App : System.Windows.Application
                 break;
             case HotkeyCloseFocused:
                 _windowManager.CloseFocused();
+                break;
+            case HotkeyMoveWorkspaceToNextMonitor:
+                _windowManager.MoveActiveWorkspaceToNextMonitor();
                 break;
             case HotkeyRefresh:
                 _windowManager.RefreshWindows();
