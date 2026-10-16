@@ -1,28 +1,17 @@
+using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using i3vm4windows.App.Interop;
 using i3vm4windows.App.Services;
+using i3vm4windows.Config;
+using Binding = i3vm4windows.Config.Binding;
 
 namespace i3vm4windows.App;
 
 public partial class App : System.Windows.Application
 {
-    private const int HotkeyFocusPrevious = 1;
-    private const int HotkeyFocusNext = 2;
-    private const int HotkeyMovePrevious = 3;
-    private const int HotkeyMoveNext = 4;
-    private const int HotkeyToggleOrientation = 5;
-    private const int HotkeyCloseFocused = 6;
-    private const int HotkeyRefresh = 7;
-    private const int HotkeyMoveWorkspaceToNextMonitor = 8;
-    private const int HotkeySwitchWorkspaceBase = 100; // Win+1..9
-    private const int HotkeyMoveToWorkspaceBase = 200; // Win+Shift+1..9
-
-    private static readonly Key[] WorkspaceNumberKeys =
-    {
-        Key.D1, Key.D2, Key.D3, Key.D4, Key.D5, Key.D6, Key.D7, Key.D8, Key.D9,
-    };
-
+    private readonly Dictionary<int, Binding> _bindings = new();
     private WindowManager? _windowManager;
     private HotkeyHost? _hotkeyHost;
     private System.Windows.Forms.NotifyIcon? _trayIcon;
@@ -31,12 +20,16 @@ public partial class App : System.Windows.Application
     {
         base.OnStartup(e);
 
+        var config = LoadConfig(e.Args);
+        foreach (var warning in config.Warnings)
+            Debug.WriteLine($"i3vm4windows configuration: {warning}");
+
         _windowManager = new WindowManager();
         _windowManager.Start();
 
         _hotkeyHost = new HotkeyHost();
         _hotkeyHost.Start(HandleHotkey);
-        RegisterHotkeys();
+        RegisterHotkeys(config);
 
         _trayIcon = CreateTrayIcon();
     }
@@ -50,75 +43,114 @@ public partial class App : System.Windows.Application
         base.OnExit(e);
     }
 
-    private void RegisterHotkeys()
+    /// <summary>
+    /// The configuration to use: the file named on the command line, else
+    /// the i3-style default location in the user profile. When the file is
+    /// missing or yields no usable bindings, the built-in defaults apply.
+    /// </summary>
+    private static I3Config LoadConfig(IReadOnlyList<string> args)
+    {
+        var path = args.FirstOrDefault(a => !a.StartsWith('-'))
+            ?? Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".config", "i3", "config");
+
+        try
+        {
+            var config = I3ConfigParser.Parse(File.ReadAllText(path));
+            if (config.Bindings.Count > 0)
+                return config;
+
+            Debug.WriteLine(
+                $"i3vm4windows configuration: {path} has no usable bindings; using defaults.");
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            Debug.WriteLine($"i3vm4windows configuration: cannot read {path}: {error.Message}");
+        }
+
+        return I3ConfigParser.Parse(I3Defaults.Text);
+    }
+
+    private void RegisterHotkeys(I3Config config)
     {
         if (_hotkeyHost is null)
             return;
 
-        _hotkeyHost.Register(HotkeyFocusPrevious, Win32.Modifiers.Win, Key.Left);
-        _hotkeyHost.Register(HotkeyFocusNext, Win32.Modifiers.Win, Key.Right);
-        _hotkeyHost.Register(HotkeyMovePrevious, Win32.Modifiers.Win | Win32.Modifiers.Shift, Key.Left);
-        _hotkeyHost.Register(HotkeyMoveNext, Win32.Modifiers.Win | Win32.Modifiers.Shift, Key.Right);
-        _hotkeyHost.Register(HotkeyToggleOrientation, Win32.Modifiers.Win, Key.Enter);
-        _hotkeyHost.Register(HotkeyCloseFocused, Win32.Modifiers.Win, Key.Q);
-        _hotkeyHost.Register(HotkeyRefresh, Win32.Modifiers.Win, Key.Y);
-        _hotkeyHost.Register(HotkeyMoveWorkspaceToNextMonitor, Win32.Modifiers.Win, Key.X);
-
-        for (var i = 0; i < WorkspaceNumberKeys.Length; i++)
+        var nextId = 1;
+        foreach (var binding in config.Bindings)
         {
-            _hotkeyHost.Register(
-                HotkeySwitchWorkspaceBase + i, Win32.Modifiers.Win, WorkspaceNumberKeys[i]);
-            _hotkeyHost.Register(
-                HotkeyMoveToWorkspaceBase + i,
-                Win32.Modifiers.Win | Win32.Modifiers.Shift,
-                WorkspaceNumberKeys[i]);
+            if (ToWpfKey(binding.Key) is not { } key)
+                continue;
+
+            var id = nextId++;
+            // Config.Modifiers uses the Win32 MOD_* values.
+            _hotkeyHost.Register(id, (Win32.Modifiers)binding.Modifiers, key);
+            _bindings[id] = binding;
         }
+    }
+
+    private static Key? ToWpfKey(string name)
+    {
+        if (name.Length == 1)
+        {
+            if (char.IsAsciiDigit(name[0]))
+                return Key.D0 + (name[0] - '0');
+            if (char.IsAsciiLetter(name[0]))
+                return Key.A + (char.ToUpperInvariant(name[0]) - 'A');
+        }
+
+        return name switch
+        {
+            "Left" => Key.Left,
+            "Right" => Key.Right,
+            "Up" => Key.Up,
+            "Down" => Key.Down,
+            "Enter" => Key.Enter,
+            "Space" => Key.Space,
+            "Tab" => Key.Tab,
+            "Escape" => Key.Escape,
+            _ => null,
+        };
     }
 
     private void HandleHotkey(int id)
     {
-        if (_windowManager is null)
+        if (_windowManager is null || !_bindings.TryGetValue(id, out var binding))
             return;
 
-        switch (id)
+        switch (binding.Action)
         {
-            case HotkeyFocusPrevious:
+            case ConfigAction.FocusPrevious:
                 _windowManager.FocusRelative(-1);
                 break;
-            case HotkeyFocusNext:
+            case ConfigAction.FocusNext:
                 _windowManager.FocusRelative(1);
                 break;
-            case HotkeyMovePrevious:
+            case ConfigAction.MovePrevious:
                 _windowManager.MoveFocused(-1);
                 break;
-            case HotkeyMoveNext:
+            case ConfigAction.MoveNext:
                 _windowManager.MoveFocused(1);
                 break;
-            case HotkeyToggleOrientation:
+            case ConfigAction.SwitchWorkspace:
+                _windowManager.SwitchWorkspace(binding.Parameter);
+                break;
+            case ConfigAction.MoveToWorkspace:
+                _windowManager.MoveFocusedToWorkspace(binding.Parameter);
+                break;
+            case ConfigAction.ToggleOrientation:
                 _windowManager.ToggleOrientation();
                 break;
-            case HotkeyCloseFocused:
+            case ConfigAction.CloseFocused:
                 _windowManager.CloseFocused();
                 break;
-            case HotkeyMoveWorkspaceToNextMonitor:
-                _windowManager.MoveActiveWorkspaceToNextMonitor();
-                break;
-            case HotkeyRefresh:
+            case ConfigAction.Refresh:
                 _windowManager.RefreshWindows();
                 break;
-        }
-
-        if (id >= HotkeySwitchWorkspaceBase &&
-            id < HotkeySwitchWorkspaceBase + WorkspaceNumberKeys.Length)
-        {
-            _windowManager.SwitchWorkspace(id - HotkeySwitchWorkspaceBase + 1);
-            return;
-        }
-
-        if (id >= HotkeyMoveToWorkspaceBase &&
-            id < HotkeyMoveToWorkspaceBase + WorkspaceNumberKeys.Length)
-        {
-            _windowManager.MoveFocusedToWorkspace(id - HotkeyMoveToWorkspaceBase + 1);
+            case ConfigAction.MoveWorkspaceToNextMonitor:
+                _windowManager.MoveActiveWorkspaceToNextMonitor();
+                break;
         }
     }
 

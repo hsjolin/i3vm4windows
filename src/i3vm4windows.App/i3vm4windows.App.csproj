@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\i3vm4windows.Core\i3vm4windows.Core.csproj" />
+    <ProjectReference Include="..\i3vm4windows.Config\i3vm4windows.Config.csproj" />
   </ItemGroup>
 
 </Project>

@@ -10,15 +10,52 @@ The project is split in two layers:
 | Project | Purpose |
 |---|---|
 | `src/i3vm4windows.Core` | Pure layout engine: an i3-style container tree (workspace -> split containers -> window leaves), focus/move/orientation operations, and rectangle computation. No Windows dependencies; fully unit tested. |
+| `src/i3vm4windows.Config` | i3 configuration parser: comments, line continuations, `set` variables and `bindsym` lines mapped to the app's tiling actions. No Windows dependencies; fully unit tested. |
 | `src/i3vm4windows.App` | WPF host process. Discovers top-level windows via `EnumWindows`, tracks show/hide/destroy through `SetWinEventHook`, applies the computed layout with `SetWindowPos`, and registers global hotkeys via `RegisterHotKey` on a message-only window. Runs from the system tray. |
 | `tests/i3vm4windows.Core.Tests` | xUnit tests for the layout engine. |
+| `tests/i3vm4windows.Config.Tests` | xUnit tests for the configuration parser. |
 
-## Default key bindings (v0.3)
+## Configuration
+
+Key bindings are configured with a regular i3 configuration file:
+
+- Location: `%USERPROFILE%\.config\i3\config` (the Windows counterpart of
+  `~/.config/i3/config`), or the path given as the first command-line
+  argument.
+- When the file is missing or yields no usable bindings, the built-in
+  default configuration below applies.
+- Supported: comments, blank lines, backslash line continuations,
+  `set $name value` variables (quoted or not) and
+  `bindsym <keys> <command>` directives. Later bindings for the same key
+  combination replace earlier ones, like i3 does.
+- Bindings must include the Win key (`Mod4`): the app owns the Win key and
+  dispatches combinations through its keyboard hook.
+
+| Command | Action |
+|---|---|
+| `workspace <n>` / `workspace <n>: name` | Switch to workspace n |
+| `move container to workspace <n>` | Move focused window to workspace n |
+| `focus left` / `focus right` | Focus previous / next window |
+| `move left` / `move right` | Move focused window within its split |
+| `split toggle`, `layout toggle split` | Toggle split orientation |
+| `kill` | Close focused window |
+| `reload` | Rescan windows and re-apply layout |
+| `move workspace to output next` | Move the active workspace to the next monitor |
+
+Workspace names must be numeric (plain `3` or `3: web`). Everything the app
+cannot perform — `exec`, `floating toggle`, non-numeric workspace names,
+`bindsym --release`, `bindcode` — is ignored with a warning written to the
+debug output; other i3 directives (`font`, `bar`, `gaps`, ...) are ignored
+silently.
+
+## Default key bindings (v0.4)
 
 Workspaces are global and each is bound to the display it was created on;
 new workspaces are created on the display that has focus. Each display shows
 the workspace that is active on it. Windows dragged to another display join
 the workspace that is active there after the next rescan (Win+Y or automatic).
+The bindings below are the built-in default configuration; a user
+configuration file replaces them.
 
 | Keys | Action |
 |---|---|
@@ -94,4 +131,4 @@ From WSL you can use the Windows SDK directly:
   numbers when they move between displays.
 - Elevated windows cannot be tiled by a non-elevated process.
 - Planned: keyboard resizing (i3-style grow/shrink hotkeys), floating windows,
-  a status bar, and a configuration file for gaps and key bindings.
+  a status bar, and configuration of gaps and layout options.
