@@ -160,16 +160,6 @@ internal static class Win32
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFOEX info);
 
-    [DllImport("kernel32.dll")]
-    public static extern IntPtr OpenProcess(uint access, bool inheritHandle, uint processId);
-
-    [DllImport("kernel32.dll")]
-    public static extern bool CloseHandle(IntPtr handle);
-
-    [DllImport("kernel32.dll", EntryPoint = "QueryFullProcessImageNameW", CharSet = CharSet.Unicode)]
-    public static extern bool QueryFullProcessImageName(
-        IntPtr process, int flags, StringBuilder path, ref uint size);
-
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     public static extern nint GetWindowLongPtr(IntPtr hwnd, int index);
 
@@ -229,8 +219,6 @@ internal static class Win32
     public const uint MONITOR_DEFAULTTONEAREST = 2;
 
     public const uint MONITORINFOF_PRIMARY = 1;
-
-    public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
     public const uint EVENT_OBJECT_DESTROY = 0x0001;
     public const uint EVENT_SYSTEM_FOREGROUND = 0x0003;

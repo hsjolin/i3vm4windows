@@ -42,15 +42,12 @@ internal sealed class WindowManager : IDisposable
     private readonly DispatcherTimer _refreshTimer;
     private readonly uint _ownProcessId;
     private readonly Win32.WinEventDelegate _winEventDelegate;
-    private AppState? _state;
-    private bool _bindingsRestored;
     private IntPtr _winEventHook;
     private bool _disposed;
 
     public WindowManager()
     {
         _ownProcessId = (uint)Environment.ProcessId;
-        _state = StateStore.Load();
         _refreshTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
             Interval = TimeSpan.FromMilliseconds(150),
@@ -110,7 +107,6 @@ internal sealed class WindowManager : IDisposable
         ReconcileUserWindowChanges();
         DiscoverNewWindows();
         ApplyLayout();
-        SaveState();
     }
 
     /// <summary>
@@ -216,7 +212,6 @@ internal sealed class WindowManager : IDisposable
         }
 
         ApplyLayout();
-        SaveState();
 
         if (_workspaces.TryGet(index)?.FocusedWindowHandle is { } focused)
             Win32.SetForegroundWindow(new IntPtr(focused));
@@ -245,7 +240,6 @@ internal sealed class WindowManager : IDisposable
             Win32.SetForegroundWindow(new IntPtr(next));
 
         ApplyLayout();
-        SaveState();
     }
 
     /// <summary>
@@ -273,7 +267,6 @@ internal sealed class WindowManager : IDisposable
         ShowAllWindows(move.SourceReplacementIndex);
 
         ApplyLayout();
-        SaveState();
 
         if (_workspaces.TryGet(move.MovedIndex)?.FocusedWindowHandle is { } focused)
             Win32.SetForegroundWindow(new IntPtr(focused));
@@ -289,15 +282,12 @@ internal sealed class WindowManager : IDisposable
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
 
         // Without the manager running, a hidden window would be unreachable;
-        // hand every managed window back to the shell visible, then persist
-        // the placements of everything shown.
+        // hand every managed window back to the shell visible.
         foreach (var handle in _managedHandles)
         {
             Win32.ShowWindow(new IntPtr(handle), Win32.SW_SHOW);
             _hiddenByUs.Remove(handle);
         }
-
-        SaveState();
 
         if (_winEventHook != IntPtr.Zero)
         {
@@ -369,13 +359,10 @@ internal sealed class WindowManager : IDisposable
     /// <summary>
     /// Brings the monitor list in sync with the system and maintains the
     /// workspace-output bindings: workspaces of a disconnected display move to
-    /// the primary display (the one that was active there stays visible), and
-    /// a reconnecting display gets its remembered workspace back.
+    /// the primary display (the one that was active there stays visible).
     /// </summary>
     private void ReconcileMonitors()
     {
-        RestoreBindings();
-
         var current = new HashSet<IntPtr>();
         var devices = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var info in MonitorInfo.Enumerate())
@@ -408,36 +395,9 @@ internal sealed class WindowManager : IDisposable
                 _workspaces.SetActiveOn(primary, moved);
         }
 
-        // A display that comes back shows the workspace it last had active.
-        foreach (var device in devices)
-        {
-            if (_workspaces.GetActiveIndex(device) is not null)
-                continue;
-
-            if (_state?.ActiveWorkspaceByMonitor.TryGetValue(device, out var remembered) == true &&
-                remembered is >= 1 and <= 9)
-            {
-                _workspaces.Bind(remembered, device);
-                _workspaces.SetActiveOn(device, remembered);
-            }
-        }
-
         // Every connected display ends up with an active workspace.
         foreach (var device in devices)
             _workspaces.ActiveOn(device);
-    }
-
-    private void RestoreBindings()
-    {
-        if (_bindingsRestored)
-            return;
-
-        _bindingsRestored = true;
-        if (_state is null)
-            return;
-
-        foreach (var (index, output) in _state.OutputByWorkspace)
-            _workspaces.Bind(index, output);
     }
 
     /// <summary>
@@ -535,29 +495,7 @@ internal sealed class WindowManager : IDisposable
             if (!IsTileable(hwnd, requireVisible: true))
                 return true;
 
-            var device = MonitorFor(hwnd).DeviceName;
-            var (exePath, title) = GetWindowIdentity(hwnd);
-            var remembered = _state?.ResolveWorkspace(exePath, title);
-
-            if (remembered is >= 1 and <= 9)
-            {
-                var workspace = _workspaces.GetOrCreate(remembered.Value, device);
-                _workspaces.AddWindowTo(remembered.Value, handle, device);
-
-                // The window belongs to its remembered workspace wherever
-                // that workspace lives; it is visible only when the workspace
-                // is active on its output.
-                if (_workspaces.GetActiveIndex(workspace.OutputName) != workspace.Index)
-                {
-                    Win32.ShowWindow(hwnd, Win32.SW_HIDE);
-                    _hiddenByUs.Add(handle);
-                }
-            }
-            else
-            {
-                _workspaces.AddWindow(handle, device);
-            }
-
+            _workspaces.AddWindow(handle, MonitorFor(hwnd).DeviceName);
             _managedHandles.Add(handle);
             return true;
         }, IntPtr.Zero);
@@ -573,54 +511,6 @@ internal sealed class WindowManager : IDisposable
             Win32.ShowWindow(new IntPtr(handle), Win32.SW_SHOW);
             _hiddenByUs.Remove(handle);
         }
-    }
-
-    /// <summary>
-    /// Snapshots the current state: workspace-output bindings, the active
-    /// workspace of each monitor and the workspace of every managed window,
-    /// keyed by a persistent identity.
-    /// </summary>
-    private AppState CaptureState()
-    {
-        var state = new AppState
-        {
-            OutputByWorkspace = _workspaces.OutputBindings.ToDictionary(
-                pair => pair.Key, pair => pair.Value),
-        };
-
-        foreach (var monitor in _monitors.Values)
-            state.ActiveWorkspaceByMonitor[monitor.DeviceName] =
-                _workspaces.ActiveOn(monitor.DeviceName).Index;
-
-        foreach (var workspace in _workspaces.All)
-        {
-            foreach (var handle in workspace.WindowHandles)
-            {
-                // Hidden windows are not remembered: their placements would
-                // resurrect hidden helper windows on the next start. They
-                // rejoin their remembered workspace when their app shows
-                // them again.
-                if (!Win32.IsWindowVisible(new IntPtr(handle)))
-                    continue;
-
-                var (exePath, title) = GetWindowIdentity(new IntPtr(handle));
-                state.Windows.Add(new WindowState(exePath, title, workspace.Index));
-            }
-        }
-
-        // Windows that were not seen again this session stay remembered, so
-        // they are recognized whenever they reopen.
-        state.MergeRemembered(_state);
-        return state;
-    }
-
-    private void SaveState()
-    {
-        if (_monitors.Count == 0)
-            return;
-
-        _state = CaptureState();
-        StateStore.Save(_state);
     }
 
     private void PositionWindow(long handle, Rect rect)
@@ -726,33 +616,5 @@ internal sealed class WindowManager : IDisposable
             return false;
 
         return true;
-    }
-
-    private static (string ExePath, string Title) GetWindowIdentity(IntPtr hwnd)
-    {
-        var title = new StringBuilder(512);
-        Win32.GetWindowText(hwnd, title, title.Capacity);
-        return (GetProcessImagePath(hwnd) ?? string.Empty, title.ToString());
-    }
-
-    private static string? GetProcessImagePath(IntPtr hwnd)
-    {
-        Win32.GetWindowThreadProcessId(hwnd, out var processId);
-        var process = Win32.OpenProcess(Win32.PROCESS_QUERY_LIMITED_INFORMATION, false, processId);
-        if (process == IntPtr.Zero)
-            return null;
-
-        try
-        {
-            var path = new StringBuilder(1024);
-            var size = (uint)path.Capacity;
-            return Win32.QueryFullProcessImageName(process, 0, path, ref size)
-                ? path.ToString()
-                : null;
-        }
-        finally
-        {
-            Win32.CloseHandle(process);
-        }
     }
 }

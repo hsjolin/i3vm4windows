@@ -56,29 +56,17 @@ disconnected or reconfigured) immediately and re-tiles after a short debounce:
 - workspaces bound to a disconnected display move to the primary display;
   the workspace that was active on it becomes active there, so its windows
   stay visible and reachable;
-- a reconnecting display gets its remembered active workspace back;
+- a reconnecting display starts on a fresh workspace;
 - work areas are refreshed on resolution changes, so layouts follow the new
   geometry.
 
-## State persistence
+## State
 
-Between runs the app remembers its state in `%APPDATA%\i3vm4windows\state.json`:
-
-- which display each workspace is bound to,
-- the active workspace of each monitor, keyed by display device name, and
-- which workspace each managed window was last tiled on.
-
-Windows are identified by their process image path and window title: a
-window that reopens with a matching identity is placed back on its
-remembered workspace (hidden if that workspace is not active); unknown
-windows join the active workspace as usual. Placements of hidden windows
-are not remembered, and a window hidden by its own app is unmanaged until
-it is shown again. Up to 300 placements are kept. State is saved whenever
-it changes and on exit.
-
-Hidden windows never linger: on exit every managed window is shown again.
-Windows a crashed instance left hidden stay hidden but return to their
-remembered workspace once their app shows them again.
+Nothing is persisted between runs. Every start begins fresh: workspace 1 is
+bound to the first display, workspace 2 to the second, and so on; new
+windows join the workspace that is active on the display they open on.
+Hidden windows never linger: on exit every managed window is shown again,
+and a window hidden by its own app is unmanaged until it is shown again.
 
 ## Building
 
@@ -99,9 +87,7 @@ From WSL you can use the Windows SDK directly:
 ## Limitations / roadmap
 
 - Switching to a workspace never renumbers anything: workspaces keep their
-  numbers when they swap between displays.
-- Manual resizes are not persisted yet: after a restart, windows are tiled
-  with equal shares again.
+  numbers when they move between displays.
 - Elevated windows cannot be tiled by a non-elevated process.
 - Planned: keyboard resizing (i3-style grow/shrink hotkeys), floating windows,
   a status bar, and a configuration file for gaps and key bindings.
