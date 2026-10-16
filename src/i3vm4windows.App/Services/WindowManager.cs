@@ -21,6 +21,9 @@ internal sealed class WindowManager : IDisposable
         "Shell_SecondaryTrayWnd",
         "MSCTFIME UI",
         "Default IME",
+        "#32768",
+        "tooltips_class32",
+        "ComboLBox",
     };
 
     private readonly WorkspaceManager _workspaces = new();
@@ -697,7 +700,18 @@ internal sealed class WindowManager : IDisposable
         if (IgnoredClasses.Contains(className.ToString()))
             return false;
 
-        if ((Win32.GetWindowLongPtr(hwnd, Win32.GWL_EXSTYLE) & Win32.WS_EX_TOOLWINDOW) != 0)
+        var extendedStyle = Win32.GetWindowLongPtr(hwnd, Win32.GWL_EXSTYLE);
+
+        // Tool windows and no-activate windows (notifications, tray
+        // pop-ups) are chrome, not tiled applications.
+        if ((extendedStyle & Win32.WS_EX_TOOLWINDOW) != 0 ||
+            (extendedStyle & Win32.WS_EX_NOACTIVATE) != 0)
+            return false;
+
+        // Pop-ups without a caption are menus, flyouts and similar
+        // transient surfaces; real application windows have a caption.
+        var style = Win32.GetWindowLongPtr(hwnd, Win32.GWL_STYLE);
+        if ((style & Win32.WS_POPUP) != 0 && (style & Win32.WS_CAPTION) == 0)
             return false;
 
         var title = new StringBuilder(512);

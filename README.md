@@ -45,6 +45,10 @@ splits. A permitted resize is kept and the sibling windows in the split adapt
 proportionally; everything else reverts. Use Win+Shift+Left/Right to move
 windows within the tiling instead.
 
+Notifications and transient surfaces are never tiled: tool windows,
+no-activate windows (toasts, tray pop-ups), menus, tooltips and pop-ups
+without a caption.
+
 ## Display changes
 
 The app reacts to display configuration changes (a monitor being connected,
