@@ -617,6 +617,14 @@ internal sealed class WindowManager : IDisposable
         if (!Win32.IsWindow(hwnd) || (requireVisible && !Win32.IsWindowVisible(hwnd)))
             return false;
 
+        // Chromium parks the windows of restored sessions minimized far
+        // off-screen, yet reports them as visible; they would reserve a tile
+        // they never fill. A minimized window has not been shown this
+        // session: it joins when restoring it fires EVENT_OBJECT_SHOW and
+        // triggers the rescan.
+        if (Win32.IsIconic(hwnd))
+            return false;
+
         Win32.GetWindowThreadProcessId(hwnd, out var processId);
         if (processId == _ownProcessId)
             return false;
