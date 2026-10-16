@@ -62,14 +62,7 @@ public partial class App : System.Windows.Application
         _hotkeyHost.Register(HotkeyToggleOrientation, Win32.Modifiers.Win, Key.Enter);
         _hotkeyHost.Register(HotkeyCloseFocused, Win32.Modifiers.Win, Key.Q);
         _hotkeyHost.Register(HotkeyRefresh, Win32.Modifiers.Win, Key.Y);
-
-        // The shell owns Win+X (Quick Link menu), so registration may fail;
-        // fall back to Win+Shift+X for the same action.
-        if (!_hotkeyHost.Register(HotkeyMoveWorkspaceToNextMonitor, Win32.Modifiers.Win, Key.X))
-            _hotkeyHost.Register(
-                HotkeyMoveWorkspaceToNextMonitor,
-                Win32.Modifiers.Win | Win32.Modifiers.Shift,
-                Key.X);
+        _hotkeyHost.Register(HotkeyMoveWorkspaceToNextMonitor, Win32.Modifiers.Win, Key.X);
 
         for (var i = 0; i < WorkspaceNumberKeys.Length; i++)
         {
