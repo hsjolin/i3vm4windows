@@ -63,6 +63,24 @@ internal static class Win32
         public IntPtr dwExtraInfo;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MSG
+    {
+        public IntPtr hwnd;
+        public uint message;
+        public IntPtr wParam;
+        public IntPtr lParam;
+        public uint time;
+        public int ptX;
+        public int ptY;
+    }
+
+    [DllImport("user32.dll")]
+    public static extern int GetMessage(out MSG message, IntPtr hwnd, uint minMessage, uint maxMessage);
+
+    [DllImport("user32.dll")]
+    public static extern bool PostThreadMessage(uint threadId, uint message, IntPtr wParam, IntPtr lParam);
+
     public delegate void WinEventDelegate(
         IntPtr hook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint thread, uint time);
 
@@ -187,6 +205,7 @@ internal static class Win32
     // Low-level keyboard hook (fallback for hotkeys the shell already owns).
     public const int WH_KEYBOARD_LL = 13;
     public const uint LLKHF_UP = 0x80;
+    public const int WM_QUIT = 0x0012;
 
     public const int WM_KEYDOWN = 0x0100;
     public const int WM_KEYUP = 0x0101;

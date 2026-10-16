@@ -1,5 +1,6 @@
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Threading;
 using i3vm4windows.App.Interop;
 
 namespace i3vm4windows.App.Services;
@@ -8,18 +9,25 @@ namespace i3vm4windows.App.Services;
 /// Owns a message-only window that receives WM_HOTKEY messages from
 /// RegisterHotKey registrations. Combinations that are already owned by
 /// another process (typically the Windows shell, e.g. Win+number taskbar
-/// activation) are intercepted with a low-level keyboard hook instead, so
-/// every binding works no matter who registered first.
+/// activation) are intercepted with a low-level keyboard hook on a
+/// dedicated thread, so slow work on the UI thread can never delay key
+/// interception past the OS hook timeout.
 /// </summary>
 internal sealed class HotkeyHost : IDisposable
 {
     // HWND_MESSAGE: message-only windows are invisible and skipped by EnumWindows.
     private static readonly IntPtr HwndMessage = new(-3);
 
+    private readonly object _lock = new();
     private readonly List<(int Id, Win32.Modifiers Modifiers, uint VirtualKey)> _registrations = new();
     private readonly List<(int Id, Win32.Modifiers Modifiers, uint VirtualKey)> _hooked = new();
     private HwndSource? _source;
+    private Dispatcher? _dispatcher;
     private Action<int>? _onHotkey;
+    private Thread? _hookThread;
+    private volatile uint _hookThreadId;
+
+    // Used only on the hook thread.
     private Win32.LowLevelKeyboardProc? _hookProc;
     private IntPtr _llHook;
     private bool _winComboConsumed;
@@ -38,6 +46,7 @@ internal sealed class HotkeyHost : IDisposable
 
         _source = new HwndSource(parameters);
         _source.AddHook(WndProc);
+        _dispatcher = _source.Dispatcher;
         _onHotkey = onHotkey;
     }
 
@@ -57,7 +66,11 @@ internal sealed class HotkeyHost : IDisposable
             return true;
         }
 
-        _hooked.Add((id, modifiers, virtualKey));
+        lock (_lock)
+        {
+            _hooked.Add((id, modifiers, virtualKey));
+        }
+
         EnsureHook();
         return true;
     }
@@ -75,12 +88,40 @@ internal sealed class HotkeyHost : IDisposable
 
     private void EnsureHook()
     {
-        if (_llHook != IntPtr.Zero || _hooked.Count == 0)
+        if (_hookThread?.IsAlive == true)
             return;
 
+        _hookThread = new Thread(RunHook)
+        {
+            IsBackground = true,
+            Name = "i3vm4windows.HotkeyHook",
+        };
+        _hookThread.Start();
+    }
+
+    /// <summary>
+    /// The low-level hook needs a message pump on its installing thread; a
+    /// busy UI thread would let key presses through whenever it cannot
+    /// service the hook fast enough.
+    /// </summary>
+    private void RunHook()
+    {
+        _hookThreadId = (uint)Environment.CurrentManagedThreadId;
         _hookProc = LowLevelKeyboardHook;
         _llHook = Win32.SetWindowsHookEx(
             Win32.WH_KEYBOARD_LL, _hookProc, Win32.GetModuleHandle(null), 0);
+
+        while (Win32.GetMessage(out _, IntPtr.Zero, 0, 0) > 0)
+        {
+            // The pump only keeps the hook alive; hotkeys dispatch from the
+            // hook callback.
+        }
+
+        if (_llHook != IntPtr.Zero)
+        {
+            Win32.UnhookWindowsHookEx(_llHook);
+            _llHook = IntPtr.Zero;
+        }
     }
 
     private IntPtr LowLevelKeyboardHook(int nCode, IntPtr wParam, IntPtr lParam)
@@ -96,7 +137,7 @@ internal sealed class HotkeyHost : IDisposable
             {
                 // Swallow the Win key release too, or the Start menu opens.
                 _winComboConsumed = HeldModifiers().HasFlag(Win32.Modifiers.Win);
-                _source?.Dispatcher.BeginInvoke(() => _onHotkey?.Invoke(id));
+                _dispatcher?.BeginInvoke(() => _onHotkey?.Invoke(id));
                 return new IntPtr(1);
             }
 
@@ -117,10 +158,13 @@ internal sealed class HotkeyHost : IDisposable
     private int? MatchHooked(uint virtualKey)
     {
         var held = HeldModifiers();
-        foreach (var (id, modifiers, vk) in _hooked)
+        lock (_lock)
         {
-            if (vk == virtualKey && held == modifiers)
-                return id;
+            foreach (var (id, modifiers, vk) in _hooked)
+            {
+                if (vk == virtualKey && held == modifiers)
+                    return id;
+            }
         }
 
         return null;
@@ -151,16 +195,33 @@ internal sealed class HotkeyHost : IDisposable
         foreach (var (id, _, _) in _registrations)
             Win32.UnregisterHotKey(_source.Handle, id);
         _registrations.Clear();
-        _hooked.Clear();
 
-        if (_llHook != IntPtr.Zero)
+        lock (_lock)
         {
-            Win32.UnhookWindowsHookEx(_llHook);
-            _llHook = IntPtr.Zero;
-            _hookProc = null;
+            _hooked.Clear();
         }
+
+        StopHookThread();
 
         _source.Dispose();
         _source = null;
+    }
+
+    private void StopHookThread()
+    {
+        var thread = _hookThread;
+        if (thread is null)
+            return;
+
+        // The thread id is published right before the hook is installed.
+        for (var attempt = 0; attempt < 20 && _hookThreadId == 0; attempt++)
+            Thread.Sleep(50);
+
+        if (_hookThreadId != 0)
+            Win32.PostThreadMessage(_hookThreadId, Win32.WM_QUIT, IntPtr.Zero, IntPtr.Zero);
+
+        thread.Join(TimeSpan.FromSeconds(2));
+        _hookThread = null;
+        _hookThreadId = 0;
     }
 }

@@ -34,8 +34,9 @@ the workspace that is active there after the next rescan (Win+Y or automatic).
 Note: registering Win-based hotkeys overrides some Windows shell shortcuts
 (for example Win+Left/Right snapping, Win+X and Win+number taskbar
 activation). Combinations another process already owns, typically the
-shell's own, are intercepted with a low-level keyboard hook instead, so the
-bindings work regardless of which process registered first.
+shell's own, are intercepted with a low-level keyboard hook on a dedicated
+thread instead, so the bindings work regardless of which process
+registered first.
 
 Managed windows are locked to their tiled position: moving a window (or
 maximizing it) snaps back to its rectangle, and resizing is only allowed
