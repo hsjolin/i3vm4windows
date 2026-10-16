@@ -32,13 +32,17 @@ internal sealed class HotkeyHost : IDisposable
     private Win32.LowLevelKeyboardProc? _hookProc;
     private IntPtr _llHook;
     private bool _winKeyDown;
-    private long _winKeyDownAt;
+    private bool _shiftKeyDown;
+    private bool _controlKeyDown;
+    private bool _altKeyDown;
+    private long _modifierDownAt;
 
     /// <summary>
-    /// Safety valve for a Win release the hook never saw (e.g. a session
-    /// switch mid-press): nobody holds the Win key this long physically.
+    /// Safety valve for a modifier release the hook never saw (e.g. a
+    /// session switch mid-press): nobody holds a modifier this long
+    /// physically.
     /// </summary>
-    private const long WinHoldTimeoutMs = 20_000;
+    private const long ModifierHoldTimeoutMs = 20_000;
 
     public void Start(Action<int> onHotkey)
     {
@@ -142,9 +146,14 @@ internal sealed class HotkeyHost : IDisposable
             var keyDown = message is Win32.WM_KEYDOWN or Win32.WM_SYSKEYDOWN;
             var keyUp = message is Win32.WM_KEYUP or Win32.WM_SYSKEYUP;
 
-            // Safety valve for a stuck Win state.
-            if (_winKeyDown && Environment.TickCount64 - _winKeyDownAt > WinHoldTimeoutMs)
+            // Safety valve for a stuck modifier state.
+            if (Environment.TickCount64 - _modifierDownAt > ModifierHoldTimeoutMs)
+            {
                 _winKeyDown = false;
+                _shiftKeyDown = false;
+                _controlKeyDown = false;
+                _altKeyDown = false;
+            }
 
             if (data.vkCode is Win32.VK_LWIN or Win32.VK_RWIN)
             {
@@ -154,7 +163,7 @@ internal sealed class HotkeyHost : IDisposable
                 if (keyDown)
                 {
                     _winKeyDown = true;
-                    _winKeyDownAt = Environment.TickCount64;
+                    _modifierDownAt = Environment.TickCount64;
                 }
                 else if (keyUp)
                 {
@@ -164,7 +173,27 @@ internal sealed class HotkeyHost : IDisposable
                 return new IntPtr(1);
             }
 
-            if (_winKeyDown && !IsModifier(data.vkCode))
+            // The low-level hook reports the physical modifier keys under
+            // their left/right codes (VK_LSHIFT, ...), not the aggregate
+            // VK_SHIFT; both forms are tracked and allowed through, because
+            // modifier state read from the system can disagree with what the
+            // user actually holds while the hook owns the Win key.
+            if (IsModifier(data.vkCode))
+            {
+                if (keyDown)
+                {
+                    TrackModifier(data.vkCode);
+                    _modifierDownAt = Environment.TickCount64;
+                }
+                else if (keyUp)
+                {
+                    ClearModifier(data.vkCode);
+                }
+
+                return Win32.CallNextHookEx(_llHook, nCode, wParam, lParam);
+            }
+
+            if (_winKeyDown)
             {
                 // Every key pressed while Win is held belongs to the app:
                 // known combinations dispatch their action, anything else is
@@ -196,27 +225,65 @@ internal sealed class HotkeyHost : IDisposable
         return null;
     }
 
+    /// <summary>
+    /// Whether the event belongs to a modifier key. The low-level hook
+    /// delivers physical modifiers as their left/right variants, so both
+    /// forms count.
+    /// </summary>
     private static bool IsModifier(uint virtualKey) =>
-        virtualKey is Win32.VK_SHIFT or Win32.VK_CONTROL or Win32.VK_MENU;
+        virtualKey is Win32.VK_SHIFT or Win32.VK_CONTROL or Win32.VK_MENU
+            or Win32.VK_LSHIFT or Win32.VK_RSHIFT
+            or Win32.VK_LCONTROL or Win32.VK_RCONTROL
+            or Win32.VK_LMENU or Win32.VK_RMENU;
+
+    private void TrackModifier(uint virtualKey)
+    {
+        switch (virtualKey)
+        {
+            case Win32.VK_SHIFT or Win32.VK_LSHIFT or Win32.VK_RSHIFT:
+                _shiftKeyDown = true;
+                break;
+            case Win32.VK_CONTROL or Win32.VK_LCONTROL or Win32.VK_RCONTROL:
+                _controlKeyDown = true;
+                break;
+            case Win32.VK_MENU or Win32.VK_LMENU or Win32.VK_RMENU:
+                _altKeyDown = true;
+                break;
+        }
+    }
+
+    private void ClearModifier(uint virtualKey)
+    {
+        switch (virtualKey)
+        {
+            case Win32.VK_SHIFT or Win32.VK_LSHIFT or Win32.VK_RSHIFT:
+                _shiftKeyDown = false;
+                break;
+            case Win32.VK_CONTROL or Win32.VK_LCONTROL or Win32.VK_RCONTROL:
+                _controlKeyDown = false;
+                break;
+            case Win32.VK_MENU or Win32.VK_LMENU or Win32.VK_RMENU:
+                _altKeyDown = false;
+                break;
+        }
+    }
 
     /// <summary>The modifier state as seen by the hook: the Win key never
-    /// reaches the system, so its bit comes from the hook's own tracking.</summary>
+    /// reaches the system, so all modifier state comes from the hook's own
+    /// tracking.</summary>
     private Win32.Modifiers HeldModifiers()
     {
         var modifiers = Win32.Modifiers.None;
         if (_winKeyDown)
             modifiers |= Win32.Modifiers.Win;
-        if (IsDown(Win32.VK_SHIFT))
+        if (_shiftKeyDown)
             modifiers |= Win32.Modifiers.Shift;
-        if (IsDown(Win32.VK_CONTROL))
+        if (_controlKeyDown)
             modifiers |= Win32.Modifiers.Control;
-        if (IsDown(Win32.VK_MENU))
+        if (_altKeyDown)
             modifiers |= Win32.Modifiers.Alt;
         return modifiers;
     }
-
-    private static bool IsDown(int virtualKey) =>
-        (Win32.GetAsyncKeyState(virtualKey) & 0x8000) != 0;
 
     public void Dispose()
     {
