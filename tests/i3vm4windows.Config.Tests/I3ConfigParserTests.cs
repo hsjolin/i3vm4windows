@@ -166,7 +166,6 @@ public class I3ConfigParserTests
     public void Unsupported_commands_and_keys_produce_warnings()
     {
         var config = I3ConfigParser.Parse("""
-            bindsym Mod4+e exec thunar
             bindsym Mod4+F1 nop
             bindsym Mod4+b workspace browsing
             bindsym Mod4+XF86AudioRaiseVolume nop
@@ -174,10 +173,42 @@ public class I3ConfigParserTests
             """);
 
         Assert.Empty(config.Bindings);
-        Assert.Equal(5, config.Warnings.Count);
+        Assert.Equal(4, config.Warnings.Count);
         Assert.Contains(config.Warnings, w => w.Contains("Unsupported command"));
         Assert.Contains(config.Warnings, w => w.Contains("Unsupported key combination"));
         Assert.Contains(config.Warnings, w => w.Contains("Win key"));
+    }
+
+    [Fact]
+    public void Exec_launches_a_program_with_its_arguments()
+    {
+        var config = I3ConfigParser.Parse(
+            """
+            bindsym Mod4+Space exec Flow.Launcher.exe
+            bindsym Mod4+D exec --no-startup-id "C:\Program Files\My App\Roofi.exe" --flag on
+            """);
+
+        Assert.Equal(2, config.Bindings.Count);
+        Assert.All(config.Bindings, b => Assert.Equal(ConfigAction.Launch, b.Action));
+
+        Assert.Equal(Modifiers.Win, config.Bindings[0].Modifiers);
+        Assert.Equal("Space", config.Bindings[0].Key);
+        Assert.Equal("Flow.Launcher.exe", config.Bindings[0].Command);
+
+        // Quoted path with spaces keeps its quotes and case; the i3 marker
+        // is dropped and the arguments survive.
+        Assert.Equal(
+            "\"C:\\Program Files\\My App\\Roofi.exe\" --flag on",
+            config.Bindings[1].Command);
+    }
+
+    [Fact]
+    public void Exec_without_a_program_warns()
+    {
+        var config = I3ConfigParser.Parse("bindsym Mod4+Space exec");
+
+        Assert.Empty(config.Bindings);
+        Assert.Single(config.Warnings);
     }
 
     [Fact]

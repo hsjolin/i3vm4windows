@@ -30,7 +30,7 @@ public static class I3ConfigParser
             if (line.Length == 0)
                 continue;
 
-            var tokens = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            var tokens = Tokenize(line);
             if (tokens.Length == 0)
                 continue;
 
@@ -52,7 +52,7 @@ public static class I3ConfigParser
             }
 
             line = SubstituteVariables(line, variables);
-            tokens = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            tokens = Tokenize(line);
             if (tokens.Length == 0)
                 continue;
 
@@ -178,9 +178,11 @@ public static class I3ConfigParser
             return;
         }
 
-        var command = tokens[2..].Select(t => t.ToLowerInvariant()).ToArray();
+        var keys = tokens[1];
+        var original = tokens[2..];
+        var command = original.Select(t => t.ToLowerInvariant()).ToArray();
 
-        if (!TryParseKeys(tokens[1], out var modifiers, out var key))
+        if (!TryParseKeys(keys, out var modifiers, out var key))
         {
             warnings.Add($"Unsupported key combination: {line}");
             return;
@@ -194,8 +196,8 @@ public static class I3ConfigParser
             return;
         }
 
-        if (TryParseCommand(command, out var action, out var parameter))
-            bindings[(modifiers, key)] = new Binding(modifiers, key, action, parameter);
+        if (TryParseCommand(command, original, out var action, out var parameter, out var commandText))
+            bindings[(modifiers, key)] = new Binding(modifiers, key, action, parameter, commandText);
         else
             warnings.Add($"Unsupported command: {line}");
     }
@@ -260,13 +262,34 @@ public static class I3ConfigParser
         };
     }
 
-    private static bool TryParseCommand(string[] command, out ConfigAction action, out int parameter)
+    private static bool TryParseCommand(
+        string[] command,
+        string[] original,
+        out ConfigAction action,
+        out int parameter,
+        out string? commandText)
     {
         action = default;
         parameter = 0;
+        commandText = null;
 
         switch (command)
         {
+            case ["exec", ..]:
+                // The program name and arguments keep their original case;
+                // only the --no-startup-id marker of i3 is dropped.
+                var execRest = command[1..];
+                var execOriginal = original[1..];
+                var offset = execRest.Length > 0 &&
+                    execRest[0].Equals("--no-startup-id", StringComparison.Ordinal)
+                        ? 1
+                        : 0;
+                if (execRest.Length - offset == 0)
+                    return false;
+
+                commandText = string.Join(' ', execOriginal[offset..]);
+                action = ConfigAction.Launch;
+                return true;
             case ["kill"]:
                 action = ConfigAction.CloseFocused;
                 return true;
@@ -343,6 +366,42 @@ public static class I3ConfigParser
 
         if (pending.Length > 0)
             yield return pending;
+    }
+
+    /// <summary>
+    /// Splits a line on whitespace, but a token wrapped in double quotes
+    /// keeps its spaces (program paths in exec commands, values in set).
+    /// </summary>
+    private static string[] Tokenize(string line)
+    {
+        var tokens = new List<string>();
+        var index = 0;
+        while (index < line.Length)
+        {
+            while (index < line.Length && char.IsWhiteSpace(line[index]))
+                index++;
+            if (index >= line.Length)
+                break;
+
+            var start = index;
+            if (line[index] == '"')
+            {
+                index++;
+                while (index < line.Length && line[index] != '"')
+                    index++;
+                if (index < line.Length)
+                    index++;
+            }
+            else
+            {
+                while (index < line.Length && !char.IsWhiteSpace(line[index]))
+                    index++;
+            }
+
+            tokens.Add(line[start..index]);
+        }
+
+        return tokens.ToArray();
     }
 
     private static string StripComment(string line)

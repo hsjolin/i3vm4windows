@@ -151,6 +151,56 @@ public partial class App : System.Windows.Application
             case ConfigAction.MoveWorkspaceToNextMonitor:
                 _windowManager.MoveActiveWorkspaceToNextMonitor();
                 break;
+            case ConfigAction.Launch:
+                LaunchProcess(binding.Command);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Starts the bound program, like i3's exec: the first token names the
+    /// program and the rest are its arguments; a quoted first token carries
+    /// a path with spaces.
+    /// </summary>
+    private static void LaunchProcess(string command)
+    {
+        if (command is null)
+            return;
+
+        var trimmed = command.Trim();
+        string fileName;
+        string arguments;
+        if (trimmed.StartsWith('"'))
+        {
+            var end = trimmed.IndexOf('"', 1);
+            if (end < 0)
+            {
+                Debug.WriteLine($"i3vm4windows: unterminated program path in {command}");
+                return;
+            }
+
+            fileName = trimmed[1..end];
+            arguments = trimmed[(end + 1)..].Trim();
+        }
+        else
+        {
+            var split = trimmed.IndexOf(' ');
+            fileName = split < 0 ? trimmed : trimmed[..split];
+            arguments = split < 0 ? "" : trimmed[(split + 1)..].Trim();
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = arguments,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception error)
+        {
+            Debug.WriteLine($"i3vm4windows: cannot start {fileName}: {error.Message}");
         }
     }
 

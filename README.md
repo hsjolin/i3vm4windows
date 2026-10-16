@@ -41,6 +41,7 @@ Key bindings are configured with a regular i3 configuration file:
 | `kill` | Close focused window |
 | `reload` | Rescan windows and re-apply layout |
 | `move workspace to output next` | Move the active workspace to the next monitor |
+| `exec [--no-startup-id] <program> [args]` | Start a program, e.g. a rofi-style launcher: `bindsym $mod+Space exec "C:\path\launcher.exe"` — a quoted path keeps its spaces |
 
 Workspace names must be numeric (plain `3` or `3: web`). Everything the app
 cannot perform — `exec`, `floating toggle`, non-numeric workspace names,

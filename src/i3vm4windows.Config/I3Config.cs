@@ -29,13 +29,21 @@ public enum ConfigAction
     CloseFocused,
     Refresh,
     MoveWorkspaceToNextMonitor,
+    Launch,
 }
 
 /// <summary>
 /// A bindsym entry: the key combination and the action it triggers. The key
-/// is normalized (canonical names, upper-case letters, digits).
+/// is normalized (canonical names, upper-case letters, digits);
+/// <paramref name="Command"/> carries the program for Launch bindings and
+/// the canonical key combination for Emit bindings.
 /// </summary>
-public sealed record Binding(Modifiers Modifiers, string Key, ConfigAction Action, int Parameter);
+public sealed record Binding(
+    Modifiers Modifiers,
+    string Key,
+    ConfigAction Action,
+    int Parameter,
+    string? Command = null);
 
 /// <summary>The result of parsing a configuration file.</summary>
 public sealed record I3Config(
