@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Description>Window layout engine and tree model inspired by the i3 window manager, free of Windows dependencies.</Description>
+  </PropertyGroup>
+
+</Project>
