@@ -14,6 +14,13 @@ public partial class App : System.Windows.Application
     private const int HotkeyToggleOrientation = 5;
     private const int HotkeyCloseFocused = 6;
     private const int HotkeyRefresh = 7;
+    private const int HotkeySwitchWorkspaceBase = 100; // Win+1..9
+    private const int HotkeyMoveToWorkspaceBase = 200; // Win+Shift+1..9
+
+    private static readonly Key[] WorkspaceNumberKeys =
+    {
+        Key.D1, Key.D2, Key.D3, Key.D4, Key.D5, Key.D6, Key.D7, Key.D8, Key.D9,
+    };
 
     private WindowManager? _windowManager;
     private HotkeyHost? _hotkeyHost;
@@ -54,6 +61,16 @@ public partial class App : System.Windows.Application
         _hotkeyHost.Register(HotkeyToggleOrientation, Win32.Modifiers.Win, Key.Enter);
         _hotkeyHost.Register(HotkeyCloseFocused, Win32.Modifiers.Win, Key.Q);
         _hotkeyHost.Register(HotkeyRefresh, Win32.Modifiers.Win, Key.Y);
+
+        for (var i = 0; i < WorkspaceNumberKeys.Length; i++)
+        {
+            _hotkeyHost.Register(
+                HotkeySwitchWorkspaceBase + i, Win32.Modifiers.Win, WorkspaceNumberKeys[i]);
+            _hotkeyHost.Register(
+                HotkeyMoveToWorkspaceBase + i,
+                Win32.Modifiers.Win | Win32.Modifiers.Shift,
+                WorkspaceNumberKeys[i]);
+        }
     }
 
     private void HandleHotkey(int id)
@@ -84,6 +101,19 @@ public partial class App : System.Windows.Application
             case HotkeyRefresh:
                 _windowManager.RefreshWindows();
                 break;
+        }
+
+        if (id >= HotkeySwitchWorkspaceBase &&
+            id < HotkeySwitchWorkspaceBase + WorkspaceNumberKeys.Length)
+        {
+            _windowManager.SwitchWorkspace(id - HotkeySwitchWorkspaceBase + 1);
+            return;
+        }
+
+        if (id >= HotkeyMoveToWorkspaceBase &&
+            id < HotkeyMoveToWorkspaceBase + WorkspaceNumberKeys.Length)
+        {
+            _windowManager.MoveFocusedToWorkspace(id - HotkeyMoveToWorkspaceBase + 1);
         }
     }
 

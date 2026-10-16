@@ -22,8 +22,7 @@ internal sealed class WindowManager : IDisposable
         "Default IME",
     };
 
-    private readonly Workspace _workspace = new("1");
-    private readonly TilingEngine _engine = new();
+    private readonly WorkspaceManager _workspaces = new();
     private readonly LayoutOptions _options = new() { OuterMargin = 8, InnerGap = 8 };
     private readonly HashSet<long> _managedHandles = new();
     private readonly DispatcherTimer _refreshTimer;
@@ -74,7 +73,7 @@ internal sealed class WindowManager : IDisposable
     public void ApplyLayout()
     {
         var monitor = GetPrimaryWorkArea();
-        var assignments = _engine.ComputeLayout(_workspace, monitor, _options);
+        var assignments = _workspaces.ComputeActiveLayout(monitor, _options);
 
         foreach (var (handle, rect) in assignments)
         {
@@ -94,29 +93,65 @@ internal sealed class WindowManager : IDisposable
 
     public void FocusRelative(int offset)
     {
-        if (!_engine.FocusRelative(_workspace, offset))
+        if (!_workspaces.FocusRelative(offset))
             return;
 
-        if (_workspace.FocusedWindowHandle is { } handle)
+        if (_workspaces.Active.FocusedWindowHandle is { } handle)
             Win32.SetForegroundWindow(new IntPtr(handle));
     }
 
     public void MoveFocused(int offset)
     {
-        if (_engine.MoveFocused(_workspace, offset))
+        if (_workspaces.MoveFocused(offset))
             ApplyLayout();
     }
 
     public void ToggleOrientation()
     {
-        _engine.ToggleOrientation(_workspace);
+        _workspaces.ToggleOrientation();
         ApplyLayout();
     }
 
     public void CloseFocused()
     {
-        if (_workspace.FocusedWindowHandle is { } handle)
+        if (_workspaces.Active.FocusedWindowHandle is { } handle)
             Win32.PostMessage(new IntPtr(handle), Win32.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+    }
+
+    /// <summary>
+    /// Activates the given workspace: hides the windows of the current one,
+    /// shows the windows of the target and re-applies the layout.
+    /// </summary>
+    public void SwitchWorkspace(int index)
+    {
+        var previous = _workspaces.ActiveIndex;
+        if (!_workspaces.SwitchTo(index))
+            return;
+
+        foreach (var handle in _workspaces.Get(previous).WindowHandles)
+            Win32.ShowWindow(new IntPtr(handle), Win32.SW_HIDE);
+
+        foreach (var handle in _workspaces.Get(index).WindowHandles)
+            Win32.ShowWindow(new IntPtr(handle), Win32.SW_SHOW);
+
+        ApplyLayout();
+
+        if (_workspaces.Active.FocusedWindowHandle is { } focused)
+            Win32.SetForegroundWindow(new IntPtr(focused));
+    }
+
+    /// <summary>Moves the focused window to the given workspace and hides it there.</summary>
+    public void MoveFocusedToWorkspace(int index)
+    {
+        if (_workspaces.MoveFocusedTo(index) is not { } moved)
+            return;
+
+        Win32.ShowWindow(new IntPtr(moved), Win32.SW_HIDE);
+
+        if (_workspaces.Active.FocusedWindowHandle is { } next)
+            Win32.SetForegroundWindow(new IntPtr(next));
+
+        ApplyLayout();
     }
 
     public void Dispose()
@@ -143,8 +178,7 @@ internal sealed class WindowManager : IDisposable
         switch (eventType)
         {
             case Win32.EVENT_SYSTEM_FOREGROUND:
-                if (_managedHandles.Contains(hwnd.ToInt64()))
-                    _workspace.FocusedWindowHandle = hwnd.ToInt64();
+                _workspaces.SetFocusedWindow(hwnd.ToInt64());
                 break;
 
             case Win32.EVENT_OBJECT_SHOW or Win32.EVENT_OBJECT_HIDE or Win32.EVENT_OBJECT_DESTROY:
@@ -162,7 +196,7 @@ internal sealed class WindowManager : IDisposable
             if (Win32.IsWindow(new IntPtr(handle)))
                 continue;
 
-            _engine.RemoveWindow(_workspace, handle);
+            _workspaces.RemoveWindow(handle);
             _managedHandles.Remove(handle);
         }
     }
@@ -174,7 +208,7 @@ internal sealed class WindowManager : IDisposable
             if (!_managedHandles.Contains(hwnd.ToInt64()) && IsTileable(hwnd))
             {
                 var handle = hwnd.ToInt64();
-                _engine.AddWindow(_workspace, handle);
+                _workspaces.AddWindow(handle);
                 _managedHandles.Add(handle);
             }
             return true;

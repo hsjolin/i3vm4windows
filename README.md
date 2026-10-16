@@ -17,6 +17,8 @@ The project is split in two layers:
 
 | Keys | Action |
 |---|---|
+| Win + 1 .. Win + 9 | Switch to workspace 1-9 |
+| Win + Shift + 1 .. 9 | Move focused window to workspace 1-9 |
 | Win + Left / Right | Focus previous / next window |
 | Win + Shift + Left / Right | Move focused window within its split |
 | Win + Enter | Toggle horizontal / vertical split orientation |
@@ -24,7 +26,7 @@ The project is split in two layers:
 | Win + Y | Rescan windows and re-apply layout |
 
 Note: registering Win-based hotkeys overrides some Windows shell shortcuts
-(for example Win+Left/Right snapping).
+(for example Win+Left/Right snapping and Win+number taskbar activation).
 
 ## Building
 
@@ -46,6 +48,5 @@ From WSL you can use the Windows SDK directly:
 
 - v0.1 tiles windows on the primary monitor's work area only.
 - Elevated windows cannot be tiled by a non-elevated process.
-- Planned: multiple workspaces per monitor, multi-monitor support,
-  manual resizing (i3-style grow/shrink), floating windows, a status bar,
-  and a configuration file for gaps and key bindings.
+- Planned: multi-monitor support, manual resizing (i3-style grow/shrink),
+  floating windows, a status bar, and a configuration file for gaps and key bindings.

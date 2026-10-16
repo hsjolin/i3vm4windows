@@ -117,6 +117,8 @@ internal static class Win32
     public const uint SWP_NOZORDER = 0x0004;
     public const uint SWP_NOACTIVATE = 0x0010;
 
+    public const int SW_HIDE = 0;
+    public const int SW_SHOW = 5;
     public const int SW_RESTORE = 9;
 
     public const int DWMWA_CLOAKED = 14;
