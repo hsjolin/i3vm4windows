@@ -1,7 +1,7 @@
 # i3vm4windows
 
 A tiling window manager for Windows, inspired by [i3wm](https://i3wm.org/).
-Written in C# / .NET 8 with a WPF host process and Win32 interop.
+Written in C# / .NET 10 with a WPF host process and Win32 interop.
 
 ## Design
 
@@ -28,7 +28,7 @@ Note: registering Win-based hotkeys overrides some Windows shell shortcuts
 
 ## Building
 
-Requires the .NET 8 SDK (or newer) on Windows:
+Requires the .NET 10 SDK on Windows:
 
 ```powershell
 dotnet build i3vm4windows.sln
