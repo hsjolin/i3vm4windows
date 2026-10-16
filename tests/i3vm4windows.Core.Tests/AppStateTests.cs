@@ -21,14 +21,14 @@ public sealed class AppStateTests
     }
 
     [Fact]
-    public void ResolveWorkspace_FallsBackToProcessImage()
+    public void ResolveWorkspace_NoProcessImageFallback()
     {
         var state = new AppState
         {
             Windows = new() { new WindowState(@"C:\app\app.exe", "Report", 4) },
         };
 
-        Assert.Equal(4, state.ResolveWorkspace(@"C:\app\app.exe", "New document"));
+        Assert.Null(state.ResolveWorkspace(@"C:\app\app.exe", "New document"));
     }
 
     [Fact]
@@ -48,18 +48,6 @@ public sealed class AppStateTests
         var state = new AppState();
 
         Assert.Null(state.ResolveWorkspace(@"C:\app\app.exe", "Report"));
-    }
-
-    [Fact]
-    public void ResolveWorkspaceExact_RequiresTitleMatch()
-    {
-        var state = new AppState
-        {
-            Windows = new() { new WindowState(@"C:\app\app.exe", "Report", 4) },
-        };
-
-        Assert.Equal(4, state.ResolveWorkspaceExact(@"C:\app\app.exe", "Report"));
-        Assert.Null(state.ResolveWorkspaceExact(@"C:\app\app.exe", "Other"));
     }
 
     [Fact]

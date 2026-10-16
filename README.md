@@ -61,15 +61,17 @@ Between runs the app remembers its state in `%APPDATA%\i3vm4windows\state.json`:
 - the active workspace of each monitor, keyed by display device name, and
 - which workspace each managed window was last tiled on.
 
-Windows are identified by their process image path and window title, with a
-fallback to the process image alone. A window that reopens with a matching
-identity is placed back on its remembered workspace (hidden if that workspace
-is not active); unknown windows join the active workspace as usual. Up to 300
-placements are kept. State is saved whenever it changes and on exit.
+Windows are identified by their process image path and window title: a
+window that reopens with a matching identity is placed back on its
+remembered workspace (hidden if that workspace is not active); unknown
+windows join the active workspace as usual. Placements of hidden windows
+are not remembered, and a window hidden by its own app is unmanaged until
+it is shown again. Up to 300 placements are kept. State is saved whenever
+it changes and on exit.
 
-Hidden windows never linger: on exit every managed window is shown again, and
-windows that a crashed instance left hidden are re-adopted (shown on their
-remembered workspace) on the next start.
+Hidden windows never linger: on exit every managed window is shown again.
+Windows a crashed instance left hidden stay hidden but return to their
+remembered workspace once their app shows them again.
 
 ## Building
 

@@ -25,9 +25,17 @@ internal sealed class WindowManager : IDisposable
 
     private readonly WorkspaceManager _workspaces = new();
     private readonly Dictionary<IntPtr, MonitorInfo> _monitors = new();
-    private readonly Dictionary<long, Rect> _assignedRects = new();
+    /// <summary>
+    /// The rectangle a window was asked to occupy and the rectangle it ended
+    /// up with; windows that clamp sizes or block moves stop the layout from
+    /// fighting them.
+    /// </summary>
+    private readonly record struct LayoutPlacement(Rect Requested, Rect Actual);
+
+    private readonly Dictionary<long, LayoutPlacement> _placements = new();
     private readonly LayoutOptions _options = new() { OuterMargin = 8, InnerGap = 8 };
     private readonly HashSet<long> _managedHandles = new();
+    private readonly HashSet<long> _hiddenByUs = new();
     private readonly DispatcherTimer _refreshTimer;
     private readonly uint _ownProcessId;
     private readonly Win32.WinEventDelegate _winEventDelegate;
@@ -102,6 +110,12 @@ internal sealed class WindowManager : IDisposable
         SaveState();
     }
 
+    /// <summary>
+    /// Coordinate comparison tolerance: DPI rounding differences below this
+    /// are ignored so our own positioning never fights itself.
+    /// </summary>
+    private const int PositionTolerance = 1;
+
     public void ApplyLayout()
     {
         foreach (var monitor in _monitors.Values)
@@ -109,19 +123,30 @@ internal sealed class WindowManager : IDisposable
             var assignments = _workspaces.ComputeActiveLayout(monitor.DeviceName, monitor.WorkArea, _options);
             foreach (var (handle, rect) in assignments)
             {
-                // Skip windows that are already in place: our own SetWindowPos
-                // calls would otherwise re-trigger the refresh cycle.
                 var hwnd = new IntPtr(handle);
-                if (Win32.GetWindowRect(hwnd, out var current) &&
-                    current.Left == rect.X && current.Top == rect.Y &&
-                    current.Right == rect.Right && current.Bottom == rect.Bottom)
+                if (Win32.IsIconic(hwnd) || !Win32.GetWindowRect(hwnd, out var current))
+                    continue;
+
+                if (NearlyAt(current, rect))
                 {
-                    _assignedRects[handle] = rect;
+                    _placements[handle] = new LayoutPlacement(rect, rect);
+                    continue;
+                }
+
+                // Skip windows that are already in place, and windows that
+                // refused this exact rectangle before: our own SetWindowPos
+                // calls would otherwise re-trigger the refresh cycle.
+                if (_placements.TryGetValue(handle, out var placement) &&
+                    placement.Requested == rect && NearlyAt(current, placement.Actual))
+                {
                     continue;
                 }
 
                 PositionWindow(handle, rect);
-                _assignedRects[handle] = rect;
+                var actual = Win32.GetWindowRect(hwnd, out var placed)
+                    ? new Rect(placed.Left, placed.Top, placed.Right - placed.Left, placed.Bottom - placed.Top)
+                    : rect;
+                _placements[handle] = new LayoutPlacement(rect, actual);
             }
         }
     }
@@ -169,10 +194,20 @@ internal sealed class WindowManager : IDisposable
             if (_workspaces.TryGet(result.PreviousIndex) is { } previous)
             {
                 foreach (var handle in previous.WindowHandles)
+                {
                     Win32.ShowWindow(new IntPtr(handle), Win32.SW_HIDE);
+                    _hiddenByUs.Add(handle);
+                }
             }
 
-            ShowAllWindows(result.NewIndex);
+            if (_workspaces.TryGet(result.NewIndex) is { } next)
+            {
+                foreach (var handle in next.WindowHandles)
+                {
+                    Win32.ShowWindow(new IntPtr(handle), Win32.SW_SHOW);
+                    _hiddenByUs.Remove(handle);
+                }
+            }
         }
 
         ApplyLayout();
@@ -193,7 +228,13 @@ internal sealed class WindowManager : IDisposable
             return;
 
         var visible = _workspaces.GetActiveIndex(moved.Target.OutputName) == moved.Target.Index;
-        Win32.ShowWindow(new IntPtr(moved.WindowHandle), visible ? Win32.SW_SHOW : Win32.SW_HIDE);
+        if (visible)
+            Win32.ShowWindow(new IntPtr(moved.WindowHandle), Win32.SW_SHOW);
+        else
+        {
+            Win32.ShowWindow(new IntPtr(moved.WindowHandle), Win32.SW_HIDE);
+            _hiddenByUs.Add(moved.WindowHandle);
+        }
 
         if (_workspaces.ActiveOn(output).FocusedWindowHandle is { } next)
             Win32.SetForegroundWindow(new IntPtr(next));
@@ -241,12 +282,17 @@ internal sealed class WindowManager : IDisposable
         _disposed = true;
         _refreshTimer.Stop();
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
-        SaveState();
 
         // Without the manager running, a hidden window would be unreachable;
-        // hand every managed window back to the shell visible.
+        // hand every managed window back to the shell visible, then persist
+        // the placements of everything shown.
         foreach (var handle in _managedHandles)
+        {
             Win32.ShowWindow(new IntPtr(handle), Win32.SW_SHOW);
+            _hiddenByUs.Remove(handle);
+        }
+
+        SaveState();
 
         if (_winEventHook != IntPtr.Zero)
         {
@@ -267,7 +313,22 @@ internal sealed class WindowManager : IDisposable
                 _workspaces.SetFocusedWindow(hwnd.ToInt64());
                 break;
 
-            case Win32.EVENT_OBJECT_SHOW or Win32.EVENT_OBJECT_HIDE or Win32.EVENT_OBJECT_DESTROY:
+            case Win32.EVENT_OBJECT_HIDE:
+                // A window hidden by its own app is withdrawn: stop managing
+                // it, like i3 unmanages unmapped windows. Hides we issued
+                // ourselves (workspace switches) keep the window managed.
+                var handle = hwnd.ToInt64();
+                if (_managedHandles.Contains(handle) &&
+                    !_hiddenByUs.Contains(handle) &&
+                    !Win32.IsIconic(hwnd))
+                {
+                    UnmanageWindow(handle);
+                }
+
+                DebounceRefresh();
+                break;
+
+            case Win32.EVENT_OBJECT_SHOW or Win32.EVENT_OBJECT_DESTROY:
                 DebounceRefresh();
                 break;
 
@@ -279,6 +340,14 @@ internal sealed class WindowManager : IDisposable
         }
     }
 
+    private void UnmanageWindow(long handle)
+    {
+        _workspaces.RemoveWindow(handle);
+        _managedHandles.Remove(handle);
+        _placements.Remove(handle);
+        _hiddenByUs.Remove(handle);
+    }
+
     private void ForgetDeadWindows()
     {
         foreach (var handle in _managedHandles.ToList())
@@ -288,7 +357,7 @@ internal sealed class WindowManager : IDisposable
 
             _workspaces.RemoveWindow(handle);
             _managedHandles.Remove(handle);
-            _assignedRects.Remove(handle);
+            _placements.Remove(handle);
         }
     }
 
@@ -384,7 +453,7 @@ internal sealed class WindowManager : IDisposable
 
             _workspaces.RemoveWindow(handle);
             _workspaces.AddWindow(handle, device);
-            _assignedRects.Remove(handle);
+            _placements.Remove(handle);
 
             // The window joined an active workspace; it must not stay hidden.
             if (!Win32.IsWindowVisible(hwnd))
@@ -403,31 +472,52 @@ internal sealed class WindowManager : IDisposable
         {
             var hwnd = new IntPtr(handle);
             if (Win32.IsIconic(hwnd) || !Win32.IsWindowVisible(hwnd) ||
-                !_assignedRects.TryGetValue(handle, out var assigned) ||
+                !_placements.TryGetValue(handle, out var placement) ||
                 !Win32.GetWindowRect(hwnd, out var current))
             {
                 continue;
             }
 
-            var rect = new Rect(
-                current.Left, current.Top, current.Right - current.Left, current.Bottom - current.Top);
-            if (rect == assigned)
+            if (NearlyAt(current, placement.Actual))
                 continue;
 
-            var widthChanged = rect.Width != assigned.Width;
-            var heightChanged = rect.Height != assigned.Height;
+            var widthChanged =
+                Math.Abs(current.Right - current.Left - placement.Actual.Width) > PositionTolerance;
+            var heightChanged =
+                Math.Abs(current.Bottom - current.Top - placement.Actual.Height) > PositionTolerance;
 
             var applied = (widthChanged, heightChanged) switch
             {
-                (true, false) => _workspaces.ApplyUserResize(handle, ResizeAxis.Width, rect.Width),
-                (false, true) => _workspaces.ApplyUserResize(handle, ResizeAxis.Height, rect.Height),
+                (true, false) => _workspaces.ApplyUserResize(handle, ResizeAxis.Width, current.Right - current.Left),
+                (false, true) => _workspaces.ApplyUserResize(handle, ResizeAxis.Height, current.Bottom - current.Top),
                 _ => false,
             };
 
-            if (!applied)
-                PositionWindow(handle, assigned);
+            if (applied)
+            {
+                // The layout changes right after this; let it position the
+                // window with the new weights.
+                _placements.Remove(handle);
+            }
+            else
+            {
+                PositionWindow(handle, placement.Actual);
+                if (Win32.GetWindowRect(hwnd, out var reverted))
+                {
+                    _placements[handle] = new LayoutPlacement(
+                        placement.Requested,
+                        new Rect(reverted.Left, reverted.Top,
+                            reverted.Right - reverted.Left, reverted.Bottom - reverted.Top));
+                }
+            }
         }
     }
+
+    private static bool NearlyAt(Win32.RECT current, Rect rect) =>
+        Math.Abs(current.Left - rect.X) <= PositionTolerance &&
+        Math.Abs(current.Top - rect.Y) <= PositionTolerance &&
+        Math.Abs(current.Right - rect.Right) <= PositionTolerance &&
+        Math.Abs(current.Bottom - rect.Bottom) <= PositionTolerance;
 
     private void DiscoverNewWindows()
     {
@@ -437,22 +527,13 @@ internal sealed class WindowManager : IDisposable
             if (_managedHandles.Contains(handle) || !Win32.IsWindow(hwnd))
                 return true;
 
-            // Visible windows join as usual. A hidden window is only adopted
-            // when it exactly matches a remembered placement: that can only be
-            // a window a previous instance parked on an inactive workspace and
-            // never got to show again (e.g. after a crash).
-            var visible = Win32.IsWindowVisible(hwnd);
-            if (!IsTileable(hwnd, requireVisible: false))
-                return true;
-
-            var (exePath, title) = GetWindowIdentity(hwnd);
-            var remembered = visible
-                ? _state?.ResolveWorkspace(exePath, title)
-                : _state?.ResolveWorkspaceExact(exePath, title);
-            if (!visible && remembered is null)
+            if (!IsTileable(hwnd, requireVisible: true))
                 return true;
 
             var device = MonitorFor(hwnd).DeviceName;
+            var (exePath, title) = GetWindowIdentity(hwnd);
+            var remembered = _state?.ResolveWorkspace(exePath, title);
+
             if (remembered is >= 1 and <= 9)
             {
                 var workspace = _workspaces.GetOrCreate(remembered.Value, device);
@@ -461,15 +542,10 @@ internal sealed class WindowManager : IDisposable
                 // The window belongs to its remembered workspace wherever
                 // that workspace lives; it is visible only when the workspace
                 // is active on its output.
-                var activeOnOutput = _workspaces.GetActiveIndex(workspace.OutputName) == workspace.Index;
-                if (activeOnOutput)
-                {
-                    if (!visible)
-                        Win32.ShowWindow(hwnd, Win32.SW_SHOW);
-                }
-                else if (visible)
+                if (_workspaces.GetActiveIndex(workspace.OutputName) != workspace.Index)
                 {
                     Win32.ShowWindow(hwnd, Win32.SW_HIDE);
+                    _hiddenByUs.Add(handle);
                 }
             }
             else
@@ -488,7 +564,10 @@ internal sealed class WindowManager : IDisposable
             return;
 
         foreach (var handle in workspace.WindowHandles)
+        {
             Win32.ShowWindow(new IntPtr(handle), Win32.SW_SHOW);
+            _hiddenByUs.Remove(handle);
+        }
     }
 
     /// <summary>
@@ -512,6 +591,13 @@ internal sealed class WindowManager : IDisposable
         {
             foreach (var handle in workspace.WindowHandles)
             {
+                // Hidden windows are not remembered: their placements would
+                // resurrect hidden helper windows on the next start. They
+                // rejoin their remembered workspace when their app shows
+                // them again.
+                if (!Win32.IsWindowVisible(new IntPtr(handle)))
+                    continue;
+
                 var (exePath, title) = GetWindowIdentity(new IntPtr(handle));
                 state.Windows.Add(new WindowState(exePath, title, workspace.Index));
             }
