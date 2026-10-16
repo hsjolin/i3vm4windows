@@ -225,4 +225,68 @@ public class I3ConfigParserTests
         Assert.Empty(config.Bindings);
         Assert.Empty(config.Warnings);
     }
+
+    [Fact]
+    public void For_window_floating_enable_creates_a_rule()
+    {
+        var config = I3ConfigParser.Parse(
+            """
+            for_window [class="Chrome_WidgetWin_1" title="^Vivaldi$"] floating enable
+            """);
+
+        var rule = Assert.Single(config.Rules);
+        Assert.True(rule.Matches("Chrome_WidgetWin_1", "Vivaldi"));
+        Assert.False(rule.Matches("Chrome_WidgetWin_1", "Some page - Vivaldi"));
+        Assert.False(rule.Matches("MozillaWindowClass", "Vivaldi"));
+        Assert.Empty(config.Warnings);
+    }
+
+    [Fact]
+    public void For_window_with_class_only_matches_any_title()
+    {
+        var config = I3ConfigParser.Parse(
+            """
+            for_window [class="^Mozilla"] floating enable
+            """);
+
+        var rule = Assert.Single(config.Rules);
+        Assert.True(rule.Matches("MozillaWindowClass", "anything"));
+        Assert.False(rule.Matches("Chrome_WidgetWin_1", "anything"));
+    }
+
+    [Fact]
+    public void For_window_criteria_may_contain_spaces()
+    {
+        var config = I3ConfigParser.Parse(
+            """
+            for_window [class="Chrome_WidgetWin_1" title="^Vivaldi$"] floating enable
+            """);
+
+        Assert.Single(config.Rules);
+        Assert.True(config.Rules[0].Matches("Chrome_WidgetWin_1", "Vivaldi"));
+    }
+
+    [Fact]
+    public void For_window_matching_is_case_insensitive()
+    {
+        var config = I3ConfigParser.Parse(
+            """
+            for_window [class="chrome_widgetwin_1"] floating enable
+            """);
+
+        Assert.True(Assert.Single(config.Rules).Matches("Chrome_WidgetWin_1", "x"));
+    }
+
+    [Fact]
+    public void For_window_without_criteria_or_with_unknown_commands_warns()
+    {
+        var config = I3ConfigParser.Parse("""
+            for_window floating enable
+            for_window [class="x"] kill
+            for_window [class="("] floating enable
+            """);
+
+        Assert.Empty(config.Rules);
+        Assert.Equal(4, config.Warnings.Count);
+    }
 }

@@ -22,6 +22,7 @@ public static class I3ConfigParser
         // Later bindsym lines win over earlier ones for the same key
         // combination, like i3 replaces bindings.
         var bindings = new Dictionary<(Modifiers Modifiers, string Key), Binding>();
+        var rules = new List<WindowRule>();
 
         foreach (var original in JoinContinuations(text))
         {
@@ -61,6 +62,10 @@ public static class I3ConfigParser
                     ParseBindsym(tokens, bindings, warnings, line);
                     break;
 
+                case "for_window":
+                    ParseForWindow(tokens, rules, warnings, line);
+                    break;
+
                 default:
                     if (tokens[0].Equals("bindcode", StringComparison.OrdinalIgnoreCase))
                         warnings.Add($"bindcode is not supported: {line}");
@@ -68,7 +73,91 @@ public static class I3ConfigParser
             }
         }
 
-        return new I3Config(bindings.Values.ToList(), warnings);
+        return new I3Config(bindings.Values.ToList(), warnings, rules);
+    }
+
+    /// <summary>
+    /// Parses a for_window directive, e.g.
+    /// for_window [class="Chrome_WidgetWin_1" title="^Vivaldi$"] floating enable.
+    /// The criteria match a window's class and title against regular
+    /// expressions like i3 does; floating enable is the only supported
+    /// command.
+    /// </summary>
+    private static void ParseForWindow(
+        string[] tokens,
+        List<WindowRule> rules,
+        List<string> warnings,
+        string line)
+    {
+        var index = 1;
+        if (index >= tokens.Length || !tokens[index].StartsWith('['))
+        {
+            warnings.Add($"for_window without criteria: {line}");
+            return;
+        }
+
+        var criteria = tokens[index];
+        while (!criteria.EndsWith(']'))
+        {
+            index++;
+            if (index >= tokens.Length)
+            {
+                warnings.Add($"Unterminated for_window criteria: {line}");
+                return;
+            }
+
+            criteria += " " + tokens[index];
+        }
+
+        var command = tokens[(index + 1)..];
+        if (command.Length == 0)
+        {
+            warnings.Add($"for_window without a command: {line}");
+            return;
+        }
+
+        Regex? classRegex = null;
+        Regex? titleRegex = null;
+        foreach (Match match in Regex.Matches(criteria, @"(class|title)\s*=\s*""([^""]*)"""))
+        {
+            var regex = TryCreateRegex(match.Groups[2].Value, warnings, line);
+            if (regex is null)
+                continue;
+
+            if (match.Groups[1].Value.Equals("class", StringComparison.OrdinalIgnoreCase))
+                classRegex = regex;
+            else
+                titleRegex = regex;
+        }
+
+        if (classRegex is null && titleRegex is null)
+        {
+            warnings.Add($"for_window without class or title criteria: {line}");
+            return;
+        }
+
+        switch (command)
+        {
+            case ["floating", "enable"]:
+                rules.Add(new WindowRule(classRegex, titleRegex));
+                break;
+            default:
+                warnings.Add($"Unsupported for_window command: {line}");
+                break;
+        }
+    }
+
+    private static Regex? TryCreateRegex(string pattern, List<string> warnings, string line)
+    {
+        try
+        {
+            return new Regex(pattern, RegexOptions.IgnoreCase);
+        }
+        catch (ArgumentException)
+        {
+            warnings.Add($"Invalid regular expression in {line}");
+            return null;
+        }
     }
 
     private static void ParseBindsym(

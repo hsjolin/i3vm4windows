@@ -24,7 +24,7 @@ public partial class App : System.Windows.Application
         foreach (var warning in config.Warnings)
             Debug.WriteLine($"i3vm4windows configuration: {warning}");
 
-        _windowManager = new WindowManager();
+        _windowManager = new WindowManager(config.Rules);
         _windowManager.Start();
 
         _hotkeyHost = new HotkeyHost();

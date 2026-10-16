@@ -1,6 +1,7 @@
 using System.Text;
 using System.Windows.Threading;
 using i3vm4windows.App.Interop;
+using i3vm4windows.Config;
 using i3vm4windows.Core;
 using Microsoft.Win32;
 
@@ -43,11 +44,13 @@ internal sealed class WindowManager : IDisposable
     private readonly DispatcherTimer _refreshTimer;
     private readonly uint _ownProcessId;
     private readonly Win32.WinEventDelegate _winEventDelegate;
+    private readonly IReadOnlyList<WindowRule> _rules;
     private IntPtr _winEventHook;
     private bool _disposed;
 
-    public WindowManager()
+    public WindowManager(IReadOnlyList<WindowRule>? rules = null)
     {
+        _rules = rules ?? Array.Empty<WindowRule>();
         _ownProcessId = (uint)Environment.ProcessId;
         _refreshTimer = new DispatcherTimer(DispatcherPriority.Background)
         {

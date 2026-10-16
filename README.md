@@ -48,6 +48,16 @@ cannot perform — `exec`, `floating toggle`, non-numeric workspace names,
 debug output; other i3 directives (`font`, `bar`, `gaps`, ...) are ignored
 silently.
 
+Window rules: `for_window [class="..." title="..."] floating enable` leaves
+matching windows entirely alone — they are never tiled, hidden or moved
+(the app has no floating layout). Class and title are case-insensitive
+regular expressions, like i3's criteria. Example — Vivaldi's profile
+picker, which Chromium-styled windows would otherwise have tiled:
+
+```i3
+for_window [class="Chrome_WidgetWin_1" title="^Vivaldi$"] floating enable
+```
+
 ## Default key bindings (v0.4)
 
 Workspaces are global and each is bound to the display it was created on;

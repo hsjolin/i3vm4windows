@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace i3vm4windows.Config;
 
 /// <summary>
@@ -36,4 +38,20 @@ public enum ConfigAction
 public sealed record Binding(Modifiers Modifiers, string Key, ConfigAction Action, int Parameter);
 
 /// <summary>The result of parsing a configuration file.</summary>
-public sealed record I3Config(IReadOnlyList<Binding> Bindings, IReadOnlyList<string> Warnings);
+public sealed record I3Config(
+    IReadOnlyList<Binding> Bindings,
+    IReadOnlyList<string> Warnings,
+    IReadOnlyList<WindowRule> Rules);
+
+/// <summary>
+/// A for_window rule: windows whose class and/or title match the regular
+/// expressions are left alone by the tiler ("floating enable" in i3 terms —
+/// this app has no floating layout, so matching windows are simply never
+/// managed).
+/// </summary>
+public sealed record WindowRule(Regex? Class, Regex? Title)
+{
+    public bool Matches(string windowClass, string title) =>
+        (Class is null || Class.IsMatch(windowClass)) &&
+        (Title is null || Title.IsMatch(title));
+}
