@@ -35,6 +35,19 @@ after the next rescan (Win+Y or automatic).
 Note: registering Win-based hotkeys overrides some Windows shell shortcuts
 (for example Win+Left/Right snapping and Win+number taskbar activation).
 
+## Display changes
+
+The app reacts to display configuration changes (a monitor being connected,
+disconnected or reconfigured) immediately and re-tiles after a short debounce:
+
+- windows from a disconnected monitor join the active workspace of the
+  monitor they are moved to, and windows that were hidden on an inactive
+  workspace become visible again;
+- a reconnecting monitor gets its remembered active workspace back, while
+  newly connected monitors start on workspace 1;
+- work areas are refreshed on resolution changes, so layouts follow the new
+  geometry.
+
 ## State persistence
 
 Between runs the app remembers its state in `%APPDATA%\i3vm4windows\state.json`:

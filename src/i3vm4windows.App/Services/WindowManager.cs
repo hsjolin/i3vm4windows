@@ -2,6 +2,7 @@ using System.Text;
 using System.Windows.Threading;
 using i3vm4windows.App.Interop;
 using i3vm4windows.Core;
+using Microsoft.Win32;
 
 namespace i3vm4windows.App.Services;
 
@@ -70,7 +71,23 @@ internal sealed class WindowManager : IDisposable
             0,
             Win32.WINEVENT_OUTOFCONTEXT | Win32.WINEVENT_SKIPOWNPROCESS);
 
+        SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+
         RefreshWindows();
+    }
+
+    /// <summary>
+    /// Reacts to display configuration changes (a monitor being connected,
+    /// disconnected or reconfigured): the debounced refresh re-syncs the
+    /// monitor list, migrates orphaned windows and re-tiles.
+    /// </summary>
+    private void OnDisplaySettingsChanged(object? sender, EventArgs e)
+    {
+        if (_disposed)
+            return;
+
+        if (!_refreshTimer.IsEnabled)
+            _refreshTimer.Start();
     }
 
     public void RefreshWindows()
@@ -229,6 +246,7 @@ internal sealed class WindowManager : IDisposable
 
         _disposed = true;
         _refreshTimer.Stop();
+        SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         SaveState();
 
         if (_winEventHook != IntPtr.Zero)
@@ -309,18 +327,24 @@ internal sealed class WindowManager : IDisposable
     /// <summary>
     /// Moves managed windows to the monitor they are currently on, e.g. after
     /// being dragged across screens or when their monitor was disconnected.
+    /// A window that was hidden on its old monitor's inactive workspace joins
+    /// the target's active workspace and becomes visible again.
     /// </summary>
     private void ReassignWindows()
     {
         foreach (var (handle, owner) in _windowOwners.ToList())
         {
-            var target = MonitorStateForWindow(new IntPtr(handle));
+            var hwnd = new IntPtr(handle);
+            var target = MonitorStateForWindow(hwnd);
             if (target == owner)
                 continue;
 
             owner.Workspaces.RemoveWindow(handle);
             target.Workspaces.AddWindow(handle);
             _windowOwners[handle] = target;
+
+            if (!Win32.IsWindowVisible(hwnd))
+                Win32.ShowWindow(hwnd, Win32.SW_SHOW);
         }
     }
 
@@ -435,17 +459,35 @@ internal sealed class WindowManager : IDisposable
                 return state;
         }
 
-        return _monitors.Values.FirstOrDefault(m => m.Info.IsPrimary)
-            ?? _monitors.Values.FirstOrDefault()
-            ?? new MonitorState(MonitorInfo.Enumerate()[0]);
+        return PrimaryMonitor();
     }
 
     private MonitorState MonitorStateForWindow(IntPtr hwnd)
     {
         var monitor = Win32.MonitorFromWindow(hwnd, Win32.MONITOR_DEFAULTTONEAREST);
-        return _monitors.TryGetValue(monitor, out var state)
+        if (_monitors.TryGetValue(monitor, out var state))
+            return state;
+
+        // The window sits on a monitor we have not synced yet (or none at
+        // all, transiently, during a display reconfiguration).
+        ReconcileMonitors();
+        return _monitors.TryGetValue(monitor, out state)
             ? state
-            : _monitors.Values.FirstOrDefault() ?? new MonitorState(MonitorInfo.Enumerate()[0]);
+            : PrimaryMonitor();
+    }
+
+    /// <summary>
+    /// The primary display, re-syncing the monitor list first when it is
+    /// empty, e.g. in the middle of a display reconfiguration.
+    /// </summary>
+    private MonitorState PrimaryMonitor()
+    {
+        if (_monitors.Count == 0)
+            ReconcileMonitors();
+
+        return _monitors.Values.FirstOrDefault(m => m.Info.IsPrimary)
+            ?? _monitors.Values.FirstOrDefault()
+            ?? throw new InvalidOperationException("No displays are connected.");
     }
 
     private bool IsTileable(IntPtr hwnd)
