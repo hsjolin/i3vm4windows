@@ -27,41 +27,76 @@ public sealed class WorkspaceManagerTests
 
         var result = manager.SwitchTo(3, "b");
 
-        Assert.True(result.Changed);
-        Assert.Equal("b", result.Output);
+        var change = Assert.Single(result.Changes);
+        Assert.True(change.Changed);
+        Assert.Equal("b", change.Output);
         Assert.Equal(3, manager.GetActiveIndex("b"));
         Assert.Equal("b", manager.TryGet(3)?.OutputName);
     }
 
     [Fact]
-    public void SwitchTo_ExistingWorkspace_ActivatesItOnItsBoundOutput()
+    public void SwitchTo_WorkspaceOnOtherOutput_SwapsWithFocusedActive()
     {
         var manager = new WorkspaceManager();
-        manager.SwitchTo(2, "a");
-        manager.SwitchTo(1, "a");
+        manager.ActiveOn("a");
+        manager.ActiveOn("b");
 
-        var result = manager.SwitchTo(2, "b");
+        var result = manager.SwitchTo(2, "a");
 
-        Assert.True(result.Changed);
-        Assert.Equal("a", result.Output);
+        Assert.Equal(2, result.Changes.Count);
+        Assert.Equal("a", result.Changes[0].Output);
+        Assert.Equal(1, result.Changes[0].PreviousIndex);
+        Assert.Equal(2, result.Changes[0].NewIndex);
+        Assert.Equal("b", result.Changes[1].Output);
+        Assert.Equal(2, result.Changes[1].PreviousIndex);
+        Assert.Equal(1, result.Changes[1].NewIndex);
+        Assert.Equal("a", manager.TryGet(2)?.OutputName);
+        Assert.Equal("b", manager.TryGet(1)?.OutputName);
         Assert.Equal(2, manager.GetActiveIndex("a"));
-        Assert.Null(manager.GetActiveIndex("b"));
+        Assert.Equal(1, manager.GetActiveIndex("b"));
     }
 
     [Fact]
-    public void SwitchTo_AlreadyActiveWorkspace_ReportedUnchanged()
+    public void SwitchTo_InactiveWorkspaceOnOtherOutput_SwapsInAndDisplacesActive()
+    {
+        var manager = new WorkspaceManager();
+        manager.ActiveOn("a");
+        manager.ActiveOn("b");
+        manager.SwitchTo(3, "a");
+
+        // Workspace 1 is bound to "a" but inactive there; "a" shows 3.
+        var result = manager.SwitchTo(1, "b");
+
+        Assert.Equal(2, result.Changes.Count);
+        Assert.Equal("b", result.Changes[0].Output);
+        Assert.Equal(2, result.Changes[0].PreviousIndex);
+        Assert.Equal(1, result.Changes[0].NewIndex);
+        Assert.Equal("a", result.Changes[1].Output);
+        Assert.Equal(3, result.Changes[1].PreviousIndex);
+        Assert.Equal(2, result.Changes[1].NewIndex);
+
+        Assert.Equal(1, manager.GetActiveIndex("b"));
+        Assert.Equal(2, manager.GetActiveIndex("a"));
+        Assert.Equal("b", manager.TryGet(1)?.OutputName);
+        Assert.Equal("a", manager.TryGet(2)?.OutputName);
+        Assert.Equal("a", manager.TryGet(3)?.OutputName);
+    }
+
+    [Fact]
+    public void SwitchTo_AlreadyActiveOnFocusedOutput_ReportedUnchanged()
     {
         var manager = new WorkspaceManager();
         manager.SwitchTo(2, "a");
 
-        var result = manager.SwitchTo(2, "b");
+        var result = manager.SwitchTo(2, "a");
 
-        Assert.False(result.Changed);
+        var change = Assert.Single(result.Changes);
+        Assert.False(change.Changed);
         Assert.Equal(2, manager.GetActiveIndex("a"));
     }
 
     [Fact]
-    public void MoveActiveWorkspaceToOutput_MovesWorkspaceAndActivatesReplacement()
+    public void MoveActiveWorkspaceToOutput_SwapsActiveWorkspaces()
     {
         var manager = new WorkspaceManager();
         manager.ActiveOn("a");
@@ -73,14 +108,15 @@ public sealed class WorkspaceManagerTests
         Assert.NotNull(result);
         Assert.Equal(3, result.MovedIndex);
         Assert.Equal("b", result.TargetOutput);
-        Assert.Equal(1, result.SourceReplacementIndex);
+        Assert.Equal(2, result.SourceReplacementIndex);
         Assert.Equal("b", manager.TryGet(3)?.OutputName);
         Assert.Equal(3, manager.GetActiveIndex("b"));
-        Assert.Equal(1, manager.GetActiveIndex("a"));
+        Assert.Equal(2, manager.GetActiveIndex("a"));
+        Assert.Equal("a", manager.TryGet(1)?.OutputName);
     }
 
     [Fact]
-    public void MoveActiveWorkspaceToOutput_CreatesReplacementWhenSourceEmpties()
+    public void MoveActiveWorkspaceToOutput_TargetWithoutWorkspace_CreatesSwapPartner()
     {
         var manager = new WorkspaceManager();
         manager.ActiveOn("a");

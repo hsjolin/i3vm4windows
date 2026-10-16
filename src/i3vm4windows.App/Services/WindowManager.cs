@@ -180,18 +180,20 @@ internal sealed class WindowManager : IDisposable
     }
 
     /// <summary>
-    /// Activates the workspace with the given number on the output it is
-    /// bound to (new workspaces are created on the focused output): hides the
-    /// windows of the output's previous workspace, shows the target's and
-    /// moves focus to it.
+    /// Activates the workspace with the given number on the focused monitor
+    /// (new workspaces are created there): every output whose view changed
+    /// swaps the visibility of its windows, and focus follows.
     /// </summary>
     public void SwitchWorkspace(int index)
     {
         var result = _workspaces.SwitchTo(index, ActiveMonitor().DeviceName);
 
-        if (result.Changed)
+        foreach (var change in result.Changes)
         {
-            if (_workspaces.TryGet(result.PreviousIndex) is { } previous)
+            if (!change.Changed)
+                continue;
+
+            if (_workspaces.TryGet(change.PreviousIndex) is { } previous)
             {
                 foreach (var handle in previous.WindowHandles)
                 {
@@ -200,7 +202,7 @@ internal sealed class WindowManager : IDisposable
                 }
             }
 
-            if (_workspaces.TryGet(result.NewIndex) is { } next)
+            if (_workspaces.TryGet(change.NewIndex) is { } next)
             {
                 foreach (var handle in next.WindowHandles)
                 {
@@ -213,7 +215,7 @@ internal sealed class WindowManager : IDisposable
         ApplyLayout();
         SaveState();
 
-        if (_workspaces.TryGet(result.NewIndex)?.FocusedWindowHandle is { } focused)
+        if (_workspaces.TryGet(index)?.FocusedWindowHandle is { } focused)
             Win32.SetForegroundWindow(new IntPtr(focused));
     }
 

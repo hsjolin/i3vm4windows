@@ -1,7 +1,13 @@
 namespace i3vm4windows.Core;
 
-/// <summary>The result of switching to a workspace.</summary>
-public sealed record SwitchResult(string Output, int PreviousIndex, int NewIndex, bool Changed);
+/// <summary>One output's view change: from PreviousIndex to NewIndex.</summary>
+public sealed record OutputSwitch(string Output, int PreviousIndex, int NewIndex)
+{
+    public bool Changed => PreviousIndex != NewIndex;
+}
+
+/// <summary>The result of switching workspaces: every output whose view changed.</summary>
+public sealed record SwitchResult(IReadOnlyList<OutputSwitch> Changes);
 
 /// <summary>The result of moving a workspace to another output.</summary>
 public sealed record WorkspaceMoveResult(
@@ -94,27 +100,50 @@ public sealed class WorkspaceManager
     }
 
     /// <summary>
-    /// Activates the workspace with the given number on the output it is bound
-    /// to; workspaces that do not exist yet are created on the focused output
-    /// instead.
+    /// Activates the workspace with the given number on the focused output:
+    /// a workspace that is bound to another output swaps with the workspace
+    /// that is active on the focused output, so every output keeps exactly
+    /// one active workspace. Workspaces that do not exist yet are created on
+    /// the focused output.
     /// </summary>
     public SwitchResult SwitchTo(int index, string focusedOutput)
     {
-        var output = TryGet(index)?.OutputName ?? focusedOutput;
+        ArgumentOutOfRangeException.ThrowIfLessThan(index, 1);
+        var workspace = TryGet(index);
+        var focused = ActiveOn(focusedOutput);
+
+        if (workspace is not null &&
+            !string.Equals(workspace.OutputName, focusedOutput, StringComparison.OrdinalIgnoreCase))
+        {
+            var otherOutput = workspace.OutputName;
+            var otherPrevious = ActiveOn(otherOutput).Index;
+
+            workspace.OutputName = focusedOutput;
+            _activeByOutput[focusedOutput] = index;
+
+            focused.OutputName = otherOutput;
+            _activeByOutput[otherOutput] = focused.Index;
+
+            return new SwitchResult(new[]
+            {
+                new OutputSwitch(focusedOutput, focused.Index, index),
+                new OutputSwitch(otherOutput, otherPrevious, focused.Index),
+            });
+        }
+
+        var output = workspace?.OutputName ?? focusedOutput;
         var previous = ActiveOn(output).Index;
-        var changed = previous != index;
-        if (changed)
+        if (previous != index)
             _activeByOutput[output] = index;
 
         GetOrCreate(index, output);
-        return new SwitchResult(output, previous, index, changed);
+        return new SwitchResult(new[] { new OutputSwitch(output, previous, index) });
     }
 
     /// <summary>
-    /// Moves the workspace that is active on the source output to the target
-    /// output and activates it there. The source output activates the
-    /// lowest-numbered workspace that remains bound to it, or a fresh one
-    /// when none remain.
+    /// Swaps the workspace that is active on the source output with the
+    /// workspace that is active on the target output: each output keeps
+    /// exactly one active workspace, and no workspace changes number.
     /// </summary>
     public WorkspaceMoveResult? MoveActiveWorkspaceToOutput(string sourceOutput, string targetOutput)
     {
@@ -122,17 +151,14 @@ public sealed class WorkspaceManager
             return null;
 
         var moved = ActiveOn(sourceOutput);
+        var replacement = ActiveOn(targetOutput);
+
         moved.OutputName = targetOutput;
         _activeByOutput[targetOutput] = moved.Index;
 
-        var replacement = _workspaces.Values
-            .Where(w => w.OutputName == sourceOutput)
-            .OrderBy(w => w.Index)
-            .FirstOrDefault();
-        if (replacement is null)
-            replacement = GetOrCreate(NextFreeIndex(), sourceOutput);
-
+        replacement.OutputName = sourceOutput;
         _activeByOutput[sourceOutput] = replacement.Index;
+
         return new WorkspaceMoveResult(moved.Index, sourceOutput, replacement.Index, targetOutput);
     }
 
