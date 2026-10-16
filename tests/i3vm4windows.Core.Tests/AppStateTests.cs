@@ -104,6 +104,23 @@ public sealed class AppStateTests
     }
 
     [Fact]
+    public void MergeRemembered_KeepsBindingsOfAbsentWorkspaces()
+    {
+        var previous = new AppState
+        {
+            OutputByWorkspace = new() { [1] = "\\\\.\\DISPLAY1", [2] = "\\\\.\\DISPLAY2" },
+        };
+        var current = new AppState
+        {
+            OutputByWorkspace = new() { [1] = "\\\\.\\DISPLAY1" },
+        };
+
+        current.MergeRemembered(previous);
+
+        Assert.Equal("\\\\.\\DISPLAY2", current.OutputByWorkspace[2]);
+    }
+
+    [Fact]
     public void MergeRemembered_TrimsToMostRecentEntries()
     {
         var previous = new AppState

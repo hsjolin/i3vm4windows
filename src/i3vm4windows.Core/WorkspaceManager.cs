@@ -1,51 +1,172 @@
 namespace i3vm4windows.Core;
 
+/// <summary>The result of switching to a workspace.</summary>
+public sealed record SwitchResult(string Output, int PreviousIndex, int NewIndex, bool Changed);
+
+/// <summary>The result of moving a workspace to another output.</summary>
+public sealed record WorkspaceMoveResult(
+    int MovedIndex, string SourceOutput, int SourceReplacementIndex, string TargetOutput);
+
+/// <summary>The result of moving a window to another workspace.</summary>
+public sealed record WindowMoveResult(long WindowHandle, Workspace Target);
+
 /// <summary>
-/// Owns a numbered set of workspaces (1-9), tracks which one is active and
-/// moves windows between them. All state is plain data, so the whole class
-/// is unit-testable without Windows.
+/// Owns the global set of numbered workspaces, tracks which one is active
+/// per output and moves windows and workspaces between outputs. Outputs are
+/// identified by name, e.g. a display device name. All state is plain data,
+/// so the whole class is unit-testable without Windows.
 /// </summary>
 public sealed class WorkspaceManager
 {
     private readonly Dictionary<int, Workspace> _workspaces = new();
+    private readonly Dictionary<string, int> _activeByOutput = new(StringComparer.OrdinalIgnoreCase);
     private readonly TilingEngine _engine = new();
 
-    public int ActiveIndex { get; private set; } = 1;
+    /// <summary>All known workspaces.</summary>
+    public IReadOnlyCollection<Workspace> All => _workspaces.Values;
 
-    /// <summary>The workspace that currently receives new windows and layout.</summary>
-    public Workspace Active => Get(ActiveIndex);
+    /// <summary>Workspace number -> the output it is bound to.</summary>
+    public IReadOnlyDictionary<int, string> OutputBindings =>
+        _workspaces.ToDictionary(pair => pair.Key, pair => pair.Value.OutputName);
 
-    /// <summary>Returns the workspace with the given number, creating it on first use.</summary>
-    public Workspace Get(int index)
+    public Workspace? TryGet(int index) => _workspaces.GetValueOrDefault(index);
+
+    /// <summary>
+    /// Returns the workspace with the given number, creating it on first use
+    /// bound to the given output.
+    /// </summary>
+    public Workspace GetOrCreate(int index, string outputName)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(index, 1);
         if (!_workspaces.TryGetValue(index, out var workspace))
         {
-            workspace = new Workspace(index.ToString());
+            workspace = new Workspace(index, outputName);
             _workspaces[index] = workspace;
         }
 
         return workspace;
     }
 
-    /// <summary>Makes the workspace with the given number active.</summary>
-    public bool SwitchTo(int index)
+    /// <summary>Binds the workspace with the given number to the given output.</summary>
+    public void Bind(int index, string outputName) =>
+        GetOrCreate(index, outputName).OutputName = outputName;
+
+    /// <summary>The workspace that is active on the output, if any was chosen yet.</summary>
+    public int? GetActiveIndex(string outputName) =>
+        _activeByOutput.TryGetValue(outputName, out var index) ? index : null;
+
+    /// <summary>Makes the given workspace active on the output, creating it bound there.</summary>
+    public void SetActiveOn(string outputName, int index)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(index, 1);
-        if (index == ActiveIndex)
-            return false;
-
-        ActiveIndex = index;
-        return true;
+        GetOrCreate(index, outputName);
+        _activeByOutput[outputName] = index;
     }
 
-    public void AddWindow(long windowHandle) => _engine.AddWindow(Active, windowHandle);
+    /// <summary>Forgets the active workspace choice for an output, e.g. when its display is gone.</summary>
+    public void ClearActive(string outputName) => _activeByOutput.Remove(outputName);
+
+    /// <summary>
+    /// The workspace shown on the output: the remembered active workspace when
+    /// it is still bound there, else the lowest-numbered workspace bound to
+    /// the output, else a fresh one.
+    /// </summary>
+    public Workspace ActiveOn(string outputName)
+    {
+        if (_activeByOutput.TryGetValue(outputName, out var index) &&
+            _workspaces.TryGetValue(index, out var remembered) &&
+            remembered.OutputName == outputName)
+            return remembered;
+
+        var bound = _workspaces.Values
+            .Where(w => w.OutputName == outputName)
+            .OrderBy(w => w.Index)
+            .FirstOrDefault();
+        if (bound is not null)
+        {
+            _activeByOutput[outputName] = bound.Index;
+            return bound;
+        }
+
+        var fresh = GetOrCreate(NextFreeIndex(), outputName);
+        _activeByOutput[outputName] = fresh.Index;
+        return fresh;
+    }
+
+    /// <summary>
+    /// Activates the workspace with the given number on the output it is bound
+    /// to; workspaces that do not exist yet are created on the focused output
+    /// instead.
+    /// </summary>
+    public SwitchResult SwitchTo(int index, string focusedOutput)
+    {
+        var output = TryGet(index)?.OutputName ?? focusedOutput;
+        var previous = ActiveOn(output).Index;
+        var changed = previous != index;
+        if (changed)
+            _activeByOutput[output] = index;
+
+        GetOrCreate(index, output);
+        return new SwitchResult(output, previous, index, changed);
+    }
+
+    /// <summary>
+    /// Moves the workspace that is active on the source output to the target
+    /// output and activates it there. The source output activates the
+    /// lowest-numbered workspace that remains bound to it, or a fresh one
+    /// when none remain.
+    /// </summary>
+    public WorkspaceMoveResult? MoveActiveWorkspaceToOutput(string sourceOutput, string targetOutput)
+    {
+        if (string.Equals(sourceOutput, targetOutput, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var moved = ActiveOn(sourceOutput);
+        moved.OutputName = targetOutput;
+        _activeByOutput[targetOutput] = moved.Index;
+
+        var replacement = _workspaces.Values
+            .Where(w => w.OutputName == sourceOutput)
+            .OrderBy(w => w.Index)
+            .FirstOrDefault();
+        if (replacement is null)
+            replacement = GetOrCreate(NextFreeIndex(), sourceOutput);
+
+        _activeByOutput[sourceOutput] = replacement.Index;
+        return new WorkspaceMoveResult(moved.Index, sourceOutput, replacement.Index, targetOutput);
+    }
+
+    /// <summary>
+    /// Moves the focused window of the source output's active workspace to
+    /// the workspace with the given number, which is created on the source
+    /// output when it does not exist yet.
+    /// </summary>
+    public WindowMoveResult? MoveFocusedTo(int index, string fromOutput)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(index, 1);
+
+        var source = ActiveOn(fromOutput);
+        if (source.FocusedWindowHandle is not { } handle)
+            return null;
+
+        var target = GetOrCreate(index, source.OutputName);
+        if (target == source || !_engine.RemoveWindow(source, handle))
+            return null;
+
+        _engine.AddWindow(target, handle);
+        return new WindowMoveResult(handle, target);
+    }
+
+    /// <summary>Adds a window to the workspace that is active on the output.</summary>
+    public void AddWindow(long windowHandle, string outputName) =>
+        _engine.AddWindow(ActiveOn(outputName), windowHandle);
 
     /// <summary>
     /// Adds a window to the workspace with the given number, creating it on
     /// first use, regardless of which workspace is active.
     /// </summary>
-    public void AddWindowTo(int index, long windowHandle) => _engine.AddWindow(Get(index), windowHandle);
+    public void AddWindowTo(int index, long windowHandle, string outputName) =>
+        _engine.AddWindow(GetOrCreate(index, outputName), windowHandle);
 
     /// <summary>Removes the window from whichever workspace owns it.</summary>
     public bool RemoveWindow(long windowHandle)
@@ -73,28 +194,37 @@ public sealed class WorkspaceManager
         return true;
     }
 
-    /// <summary>Moves the focused window of the active workspace to the workspace with the given number.
-    /// Returns the moved handle, or null when nothing was moved.</summary>
-    public long? MoveFocusedTo(int index)
-    {
-        ArgumentOutOfRangeException.ThrowIfLessThan(index, 1);
-        if (index == ActiveIndex || Active.FocusedWindowHandle is not { } handle)
-            return null;
+    /// <summary>
+    /// Moves focus to the window <paramref name="offset"/> positions away in
+    /// layout order on the output's active workspace, wrapping around.
+    /// </summary>
+    public bool FocusRelative(string outputName, int offset) =>
+        _engine.FocusRelative(ActiveOn(outputName), offset);
 
-        if (!_engine.RemoveWindow(Active, handle))
-            return null;
+    /// <summary>
+    /// Moves the focused window of the output's active workspace within its
+    /// parent split by <paramref name="offset"/> slots.
+    /// </summary>
+    public bool MoveFocused(string outputName, int offset) =>
+        _engine.MoveFocused(ActiveOn(outputName), offset);
 
-        _engine.AddWindow(Get(index), handle);
-        return handle;
-    }
+    /// <summary>
+    /// Flips the orientation of the split containing the focused window of
+    /// the output's active workspace.
+    /// </summary>
+    public void ToggleOrientation(string outputName) =>
+        _engine.ToggleOrientation(ActiveOn(outputName));
 
-    public bool FocusRelative(int offset) => _engine.FocusRelative(Active, offset);
-
-    public bool MoveFocused(int offset) => _engine.MoveFocused(Active, offset);
-
-    public void ToggleOrientation() => _engine.ToggleOrientation(Active);
-
+    /// <summary>Computes the layout of the output's active workspace.</summary>
     public IReadOnlyList<AssignedRect> ComputeActiveLayout(
-        Rect monitor, LayoutOptions? options = null) =>
-        _engine.ComputeLayout(Active, monitor, options);
+        string outputName, Rect monitor, LayoutOptions? options = null) =>
+        _engine.ComputeLayout(ActiveOn(outputName), monitor, options);
+
+    private int NextFreeIndex()
+    {
+        var index = 1;
+        while (_workspaces.ContainsKey(index))
+            index++;
+        return index;
+    }
 }

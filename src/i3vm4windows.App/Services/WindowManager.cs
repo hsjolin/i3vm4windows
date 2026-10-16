@@ -7,9 +7,9 @@ using Microsoft.Win32;
 namespace i3vm4windows.App.Services;
 
 /// <summary>
-/// Tracks top-level windows across all connected monitors, tiling each on its
-/// own work area with an independent set of workspaces per monitor, and
-/// applies the computed layout via SetWindowPos.
+/// Tracks top-level windows across all connected monitors and tiles the
+/// global workspaces on the outputs they are bound to, applying the computed
+/// layout via SetWindowPos.
 /// </summary>
 internal sealed class WindowManager : IDisposable
 {
@@ -23,24 +23,15 @@ internal sealed class WindowManager : IDisposable
         "Default IME",
     };
 
-    /// <summary>A connected display with its own independent set of workspaces.</summary>
-    private sealed class MonitorState
-    {
-        public MonitorState(MonitorInfo info) => Info = info;
-
-        public MonitorInfo Info { get; set; }
-
-        public WorkspaceManager Workspaces { get; } = new();
-    }
-
-    private readonly Dictionary<IntPtr, MonitorState> _monitors = new();
-    private readonly Dictionary<long, MonitorState> _windowOwners = new();
+    private readonly WorkspaceManager _workspaces = new();
+    private readonly Dictionary<IntPtr, MonitorInfo> _monitors = new();
     private readonly LayoutOptions _options = new() { OuterMargin = 8, InnerGap = 8 };
     private readonly HashSet<long> _managedHandles = new();
     private readonly DispatcherTimer _refreshTimer;
     private readonly uint _ownProcessId;
     private readonly Win32.WinEventDelegate _winEventDelegate;
     private AppState? _state;
+    private bool _bindingsRestored;
     private IntPtr _winEventHook;
     private bool _disposed;
 
@@ -105,93 +96,84 @@ internal sealed class WindowManager : IDisposable
 
     public void ApplyLayout()
     {
-        foreach (var state in _monitors.Values)
+        foreach (var monitor in _monitors.Values)
         {
-            var assignments = state.Workspaces.ComputeActiveLayout(state.Info.WorkArea, _options);
-
+            var assignments = _workspaces.ComputeActiveLayout(monitor.DeviceName, monitor.WorkArea, _options);
             foreach (var (handle, rect) in assignments)
-            {
-                var hwnd = new IntPtr(handle);
-
-                // A maximized or minimized window ignores SetWindowPos; restore first.
-                if (Win32.IsIconic(hwnd) || Win32.IsZoomed(hwnd))
-                    Win32.ShowWindow(hwnd, Win32.SW_RESTORE);
-
-                Win32.SetWindowPos(
-                    hwnd,
-                    IntPtr.Zero,
-                    rect.X, rect.Y, rect.Width, rect.Height,
-                    Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
-            }
+                PositionWindow(handle, rect);
         }
     }
 
     public void FocusRelative(int offset)
     {
-        var workspaces = ActiveMonitor().Workspaces;
-        if (!workspaces.FocusRelative(offset))
+        var output = ActiveMonitor().DeviceName;
+        if (!_workspaces.FocusRelative(output, offset))
             return;
 
-        if (workspaces.Active.FocusedWindowHandle is { } handle)
+        if (_workspaces.ActiveOn(output).FocusedWindowHandle is { } handle)
             Win32.SetForegroundWindow(new IntPtr(handle));
     }
 
     public void MoveFocused(int offset)
     {
-        if (ActiveMonitor().Workspaces.MoveFocused(offset))
+        if (_workspaces.MoveFocused(ActiveMonitor().DeviceName, offset))
             ApplyLayout();
     }
 
     public void ToggleOrientation()
     {
-        ActiveMonitor().Workspaces.ToggleOrientation();
+        _workspaces.ToggleOrientation(ActiveMonitor().DeviceName);
         ApplyLayout();
     }
 
     public void CloseFocused()
     {
-        if (ActiveMonitor().Workspaces.Active.FocusedWindowHandle is { } handle)
+        if (_workspaces.ActiveOn(ActiveMonitor().DeviceName).FocusedWindowHandle is { } handle)
             Win32.PostMessage(new IntPtr(handle), Win32.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
     }
 
     /// <summary>
-    /// Activates the given workspace on the monitor that currently has focus:
-    /// hides the windows of the current one, shows the windows of the target
-    /// and re-applies the layout.
+    /// Activates the workspace with the given number on the output it is
+    /// bound to (new workspaces are created on the focused output): hides the
+    /// windows of the output's previous workspace, shows the target's and
+    /// moves focus to it.
     /// </summary>
     public void SwitchWorkspace(int index)
     {
-        var workspaces = ActiveMonitor().Workspaces;
-        var previous = workspaces.ActiveIndex;
-        if (!workspaces.SwitchTo(index))
-            return;
+        var result = _workspaces.SwitchTo(index, ActiveMonitor().DeviceName);
 
-        foreach (var handle in workspaces.Get(previous).WindowHandles)
-            Win32.ShowWindow(new IntPtr(handle), Win32.SW_HIDE);
+        if (result.Changed)
+        {
+            if (_workspaces.TryGet(result.PreviousIndex) is { } previous)
+            {
+                foreach (var handle in previous.WindowHandles)
+                    Win32.ShowWindow(new IntPtr(handle), Win32.SW_HIDE);
+            }
 
-        foreach (var handle in workspaces.Get(index).WindowHandles)
-            Win32.ShowWindow(new IntPtr(handle), Win32.SW_SHOW);
+            ShowAllWindows(result.NewIndex);
+        }
 
         ApplyLayout();
         SaveState();
 
-        if (workspaces.Active.FocusedWindowHandle is { } focused)
+        if (_workspaces.TryGet(result.NewIndex)?.FocusedWindowHandle is { } focused)
             Win32.SetForegroundWindow(new IntPtr(focused));
     }
 
     /// <summary>
-    /// Moves the focused window to the given workspace on its own monitor
-    /// and hides it there.
+    /// Moves the focused window to the workspace with the given number; it
+    /// becomes visible when that workspace is active on its output.
     /// </summary>
     public void MoveFocusedToWorkspace(int index)
     {
-        var workspaces = ActiveMonitor().Workspaces;
-        if (workspaces.MoveFocusedTo(index) is not { } moved)
+        var output = ActiveMonitor().DeviceName;
+        if (_workspaces.MoveFocusedTo(index, output) is not { } moved)
             return;
 
-        Win32.ShowWindow(new IntPtr(moved), Win32.SW_HIDE);
+        var visible = _workspaces.GetActiveIndex(moved.Target.OutputName) == moved.Target.Index;
+        Win32.ShowWindow(new IntPtr(moved.WindowHandle), visible ? Win32.SW_SHOW : Win32.SW_HIDE);
 
-        if (workspaces.Active.FocusedWindowHandle is { } next)
+        if (_workspaces.ActiveOn(output).FocusedWindowHandle is { } next)
             Win32.SetForegroundWindow(new IntPtr(next));
 
         ApplyLayout();
@@ -199,15 +181,15 @@ internal sealed class WindowManager : IDisposable
     }
 
     /// <summary>
-    /// Moves all windows of the active workspace on the focused monitor to
-    /// the active workspace of the next monitor (ordered left to right,
-    /// wrapping around) and shows them there.
+    /// Moves the workspace that is active on the focused monitor to the next
+    /// monitor (ordered left to right, wrapping around) and activates it
+    /// there; the source monitor activates a replacement workspace.
     /// </summary>
     public void MoveActiveWorkspaceToNextMonitor()
     {
         var monitors = _monitors.Values
-            .OrderBy(m => m.Info.WorkArea.X)
-            .ThenBy(m => m.Info.WorkArea.Y)
+            .OrderBy(m => m.WorkArea.X)
+            .ThenBy(m => m.WorkArea.Y)
             .ToList();
         if (monitors.Count < 2)
             return;
@@ -215,28 +197,18 @@ internal sealed class WindowManager : IDisposable
         var source = ActiveMonitor();
         var target = monitors[(monitors.IndexOf(source) + 1) % monitors.Count];
 
-        var handles = source.Workspaces.Active.WindowHandles.ToList();
-        if (handles.Count == 0)
+        var move = _workspaces.MoveActiveWorkspaceToOutput(source.DeviceName, target.DeviceName);
+        if (move is null)
             return;
 
-        var focusedBefore = source.Workspaces.Active.FocusedWindowHandle;
-        foreach (var handle in handles)
-        {
-            source.Workspaces.RemoveWindow(handle);
-            target.Workspaces.AddWindow(handle);
-            Win32.ShowWindow(new IntPtr(handle), Win32.SW_SHOW);
-            _windowOwners[handle] = target;
-        }
-
-        // AddWindow re-points focus at each added window; keep the original one.
-        if (focusedBefore is { } focused && handles.Contains(focused))
-            target.Workspaces.Active.FocusedWindowHandle = focused;
+        ShowAllWindows(move.MovedIndex);
+        ShowAllWindows(move.SourceReplacementIndex);
 
         ApplyLayout();
         SaveState();
 
-        if (target.Workspaces.Active.FocusedWindowHandle is { } next)
-            Win32.SetForegroundWindow(new IntPtr(next));
+        if (_workspaces.TryGet(move.MovedIndex)?.FocusedWindowHandle is { } focused)
+            Win32.SetForegroundWindow(new IntPtr(focused));
     }
 
     public void Dispose()
@@ -270,8 +242,7 @@ internal sealed class WindowManager : IDisposable
         switch (eventType)
         {
             case Win32.EVENT_SYSTEM_FOREGROUND:
-                if (_windowOwners.TryGetValue(hwnd.ToInt64(), out var owner))
-                    owner.Workspaces.SetFocusedWindow(hwnd.ToInt64());
+                _workspaces.SetFocusedWindow(hwnd.ToInt64());
                 break;
 
             case Win32.EVENT_OBJECT_SHOW or Win32.EVENT_OBJECT_HIDE or Win32.EVENT_OBJECT_DESTROY:
@@ -289,65 +260,105 @@ internal sealed class WindowManager : IDisposable
             if (Win32.IsWindow(new IntPtr(handle)))
                 continue;
 
-            if (_windowOwners.TryGetValue(handle, out var owner))
-            {
-                owner.Workspaces.RemoveWindow(handle);
-                _windowOwners.Remove(handle);
-            }
-
+            _workspaces.RemoveWindow(handle);
             _managedHandles.Remove(handle);
         }
     }
 
     /// <summary>
-    /// Brings the monitor list in sync with the system: adds states for new
-    /// displays, refreshes work areas (resolution changes) and drops states
-    /// for displays that were disconnected.
+    /// Brings the monitor list in sync with the system and maintains the
+    /// workspace-output bindings: workspaces of a disconnected display move to
+    /// the primary display (the one that was active there stays visible), and
+    /// a reconnecting display gets its remembered workspace back.
     /// </summary>
     private void ReconcileMonitors()
     {
+        RestoreBindings();
+
         var current = new HashSet<IntPtr>();
+        var devices = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var info in MonitorInfo.Enumerate())
         {
             current.Add(info.Handle);
-            if (_monitors.TryGetValue(info.Handle, out var state))
-            {
-                state.Info = info;
-            }
-            else
-            {
-                state = new MonitorState(info);
-                if (_state?.ActiveWorkspaceByMonitor.TryGetValue(info.DeviceName, out var active) == true &&
-                    active is >= 1 and <= 9)
-                    state.Workspaces.SwitchTo(active);
-
-                _monitors[info.Handle] = state;
-            }
+            devices.Add(info.DeviceName);
+            // Replace the entry so work areas follow resolution changes.
+            _monitors[info.Handle] = info;
         }
 
         foreach (var disconnected in _monitors.Keys.Where(h => !current.Contains(h)).ToList())
             _monitors.Remove(disconnected);
+
+        var primary = PrimaryMonitor().DeviceName;
+
+        foreach (var output in _workspaces.OutputBindings.Values.Distinct().ToList())
+        {
+            if (devices.Contains(output))
+                continue;
+
+            var orphanedActive = _workspaces.GetActiveIndex(output);
+            foreach (var (index, binding) in _workspaces.OutputBindings)
+            {
+                if (string.Equals(binding, output, StringComparison.OrdinalIgnoreCase))
+                    _workspaces.Bind(index, primary);
+            }
+
+            _workspaces.ClearActive(output);
+            if (orphanedActive is int moved && _workspaces.TryGet(moved)?.OutputName == primary)
+                _workspaces.SetActiveOn(primary, moved);
+        }
+
+        // A display that comes back shows the workspace it last had active.
+        foreach (var device in devices)
+        {
+            if (_workspaces.GetActiveIndex(device) is not null)
+                continue;
+
+            if (_state?.ActiveWorkspaceByMonitor.TryGetValue(device, out var remembered) == true &&
+                remembered is >= 1 and <= 9)
+            {
+                _workspaces.Bind(remembered, device);
+                _workspaces.SetActiveOn(device, remembered);
+            }
+        }
+
+        // Every connected display ends up with an active workspace.
+        foreach (var device in devices)
+            _workspaces.ActiveOn(device);
+    }
+
+    private void RestoreBindings()
+    {
+        if (_bindingsRestored)
+            return;
+
+        _bindingsRestored = true;
+        if (_state is null)
+            return;
+
+        foreach (var (index, output) in _state.OutputByWorkspace)
+            _workspaces.Bind(index, output);
     }
 
     /// <summary>
-    /// Moves managed windows to the monitor they are currently on, e.g. after
-    /// being dragged across screens or when their monitor was disconnected.
-    /// A window that was hidden on its old monitor's inactive workspace joins
-    /// the target's active workspace and becomes visible again.
+    /// Moves windows that were dragged to another display into the workspace
+    /// that is active there.
     /// </summary>
     private void ReassignWindows()
     {
-        foreach (var (handle, owner) in _windowOwners.ToList())
+        foreach (var handle in _managedHandles.ToList())
         {
-            var hwnd = new IntPtr(handle);
-            var target = MonitorStateForWindow(hwnd);
-            if (target == owner)
+            if (_workspaces.FindOwner(handle) is not { } workspace)
                 continue;
 
-            owner.Workspaces.RemoveWindow(handle);
-            target.Workspaces.AddWindow(handle);
-            _windowOwners[handle] = target;
+            var hwnd = new IntPtr(handle);
+            var device = MonitorFor(hwnd).DeviceName;
+            if (string.Equals(workspace.OutputName, device, StringComparison.OrdinalIgnoreCase))
+                continue;
 
+            _workspaces.RemoveWindow(handle);
+            _workspaces.AddWindow(handle, device);
+
+            // The window joined an active workspace; it must not stay hidden.
             if (!Win32.IsWindowVisible(hwnd))
                 Win32.ShowWindow(hwnd, Win32.SW_SHOW);
         }
@@ -376,11 +387,17 @@ internal sealed class WindowManager : IDisposable
             if (!visible && remembered is null)
                 return true;
 
-            var state = MonitorStateForWindow(hwnd);
+            var device = MonitorFor(hwnd).DeviceName;
             if (remembered is >= 1 and <= 9)
             {
-                state.Workspaces.AddWindowTo(remembered.Value, handle);
-                if (state.Workspaces.ActiveIndex == remembered.Value)
+                var workspace = _workspaces.GetOrCreate(remembered.Value, device);
+                _workspaces.AddWindowTo(remembered.Value, handle, device);
+
+                // The window belongs to its remembered workspace wherever
+                // that workspace lives; it is visible only when the workspace
+                // is active on its output.
+                var activeOnOutput = _workspaces.GetActiveIndex(workspace.OutputName) == workspace.Index;
+                if (activeOnOutput)
                 {
                     if (!visible)
                         Win32.ShowWindow(hwnd, Win32.SW_SHOW);
@@ -392,34 +409,47 @@ internal sealed class WindowManager : IDisposable
             }
             else
             {
-                state.Workspaces.AddWindow(handle);
+                _workspaces.AddWindow(handle, device);
             }
 
             _managedHandles.Add(handle);
-            _windowOwners[handle] = state;
             return true;
         }, IntPtr.Zero);
     }
 
+    private void ShowAllWindows(int index)
+    {
+        if (_workspaces.TryGet(index) is not { } workspace)
+            return;
+
+        foreach (var handle in workspace.WindowHandles)
+            Win32.ShowWindow(new IntPtr(handle), Win32.SW_SHOW);
+    }
+
     /// <summary>
-    /// Snapshots the current state: active workspace per monitor and the
-    /// workspace of every managed window, keyed by a persistent identity.
+    /// Snapshots the current state: workspace-output bindings, the active
+    /// workspace of each monitor and the workspace of every managed window,
+    /// keyed by a persistent identity.
     /// </summary>
     private AppState CaptureState()
     {
-        var state = new AppState();
+        var state = new AppState
+        {
+            OutputByWorkspace = _workspaces.OutputBindings.ToDictionary(
+                pair => pair.Key, pair => pair.Value),
+        };
 
         foreach (var monitor in _monitors.Values)
-            state.ActiveWorkspaceByMonitor[monitor.Info.DeviceName] = monitor.Workspaces.ActiveIndex;
+            state.ActiveWorkspaceByMonitor[monitor.DeviceName] =
+                _workspaces.ActiveOn(monitor.DeviceName).Index;
 
-        foreach (var (handle, owner) in _windowOwners)
+        foreach (var workspace in _workspaces.All)
         {
-            if (owner.Workspaces.FindOwner(handle) is not { } workspace ||
-                !int.TryParse(workspace.Name, out var index))
-                continue;
-
-            var (exePath, title) = GetWindowIdentity(new IntPtr(handle));
-            state.Windows.Add(new WindowState(exePath, title, index));
+            foreach (var handle in workspace.WindowHandles)
+            {
+                var (exePath, title) = GetWindowIdentity(new IntPtr(handle));
+                state.Windows.Add(new WindowState(exePath, title, workspace.Index));
+            }
         }
 
         // Windows that were not seen again this session stay remembered, so
@@ -437,78 +467,60 @@ internal sealed class WindowManager : IDisposable
         StateStore.Save(_state);
     }
 
-    private static (string ExePath, string Title) GetWindowIdentity(IntPtr hwnd)
+    private void PositionWindow(long handle, Rect rect)
     {
-        var title = new StringBuilder(512);
-        Win32.GetWindowText(hwnd, title, title.Capacity);
-        return (GetProcessImagePath(hwnd) ?? string.Empty, title.ToString());
-    }
+        var hwnd = new IntPtr(handle);
 
-    private static string? GetProcessImagePath(IntPtr hwnd)
-    {
-        Win32.GetWindowThreadProcessId(hwnd, out var processId);
-        var process = Win32.OpenProcess(Win32.PROCESS_QUERY_LIMITED_INFORMATION, false, processId);
-        if (process == IntPtr.Zero)
-            return null;
+        // A maximized or minimized window ignores SetWindowPos; restore first.
+        if (Win32.IsIconic(hwnd) || Win32.IsZoomed(hwnd))
+            Win32.ShowWindow(hwnd, Win32.SW_RESTORE);
 
-        try
-        {
-            var path = new StringBuilder(1024);
-            var size = (uint)path.Capacity;
-            return Win32.QueryFullProcessImageName(process, 0, path, ref size)
-                ? path.ToString()
-                : null;
-        }
-        finally
-        {
-            Win32.CloseHandle(process);
-        }
+        Win32.SetWindowPos(
+            hwnd,
+            IntPtr.Zero,
+            rect.X, rect.Y, rect.Width, rect.Height,
+            Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
     }
 
     /// <summary>
     /// The monitor that hotkeys act on: the one showing the foreground window,
     /// falling back to the primary display.
     /// </summary>
-    private MonitorState ActiveMonitor()
+    private MonitorInfo ActiveMonitor()
     {
         var foreground = Win32.GetForegroundWindow();
         if (foreground != IntPtr.Zero)
         {
-            if (_windowOwners.TryGetValue(foreground.ToInt64(), out var owner))
-                return owner;
-
             var monitor = Win32.MonitorFromWindow(foreground, Win32.MONITOR_DEFAULTTONEAREST);
-            if (_monitors.TryGetValue(monitor, out var state))
-                return state;
+            if (_monitors.TryGetValue(monitor, out var info))
+                return info;
         }
 
         return PrimaryMonitor();
     }
 
-    private MonitorState MonitorStateForWindow(IntPtr hwnd)
+    private MonitorInfo MonitorFor(IntPtr hwnd)
     {
         var monitor = Win32.MonitorFromWindow(hwnd, Win32.MONITOR_DEFAULTTONEAREST);
-        if (_monitors.TryGetValue(monitor, out var state))
-            return state;
+        if (_monitors.TryGetValue(monitor, out var info))
+            return info;
 
         // The window sits on a monitor we have not synced yet (or none at
         // all, transiently, during a display reconfiguration).
         ReconcileMonitors();
-        return _monitors.TryGetValue(monitor, out state)
-            ? state
-            : PrimaryMonitor();
+        return _monitors.TryGetValue(monitor, out info) ? info : PrimaryMonitor();
     }
 
     /// <summary>
     /// The primary display, re-syncing the monitor list first when it is
     /// empty, e.g. in the middle of a display reconfiguration.
     /// </summary>
-    private MonitorState PrimaryMonitor()
+    private MonitorInfo PrimaryMonitor()
     {
         if (_monitors.Count == 0)
             ReconcileMonitors();
 
-        return _monitors.Values.FirstOrDefault(m => m.Info.IsPrimary)
+        return _monitors.Values.FirstOrDefault(m => m.IsPrimary)
             ?? _monitors.Values.FirstOrDefault()
             ?? throw new InvalidOperationException("No displays are connected.");
     }
@@ -547,5 +559,33 @@ internal sealed class WindowManager : IDisposable
             return false;
 
         return true;
+    }
+
+    private static (string ExePath, string Title) GetWindowIdentity(IntPtr hwnd)
+    {
+        var title = new StringBuilder(512);
+        Win32.GetWindowText(hwnd, title, title.Capacity);
+        return (GetProcessImagePath(hwnd) ?? string.Empty, title.ToString());
+    }
+
+    private static string? GetProcessImagePath(IntPtr hwnd)
+    {
+        Win32.GetWindowThreadProcessId(hwnd, out var processId);
+        var process = Win32.OpenProcess(Win32.PROCESS_QUERY_LIMITED_INFORMATION, false, processId);
+        if (process == IntPtr.Zero)
+            return null;
+
+        try
+        {
+            var path = new StringBuilder(1024);
+            var size = (uint)path.Capacity;
+            return Win32.QueryFullProcessImageName(process, 0, path, ref size)
+                ? path.ToString()
+                : null;
+        }
+        finally
+        {
+            Win32.CloseHandle(process);
+        }
     }
 }

@@ -9,7 +9,7 @@ public sealed class TilingEngineTests
 
     private static (Workspace Workspace, TilingEngine Engine) Create(params long[] handles)
     {
-        var workspace = new Workspace("1");
+        var workspace = new Workspace(1, "test");
         var engine = new TilingEngine();
         foreach (var handle in handles)
             engine.AddWindow(workspace, handle);

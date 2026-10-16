@@ -17,6 +17,9 @@ public sealed class AppState
     /// <summary>Display device name -> the workspace that was active on it.</summary>
     public Dictionary<string, int> ActiveWorkspaceByMonitor { get; set; } = new();
 
+    /// <summary>Workspace number -> the display it is bound to.</summary>
+    public Dictionary<int, string> OutputByWorkspace { get; set; } = new();
+
     /// <summary>Known window placements, most recent first.</summary>
     public List<WindowState> Windows { get; set; } = new();
 
@@ -69,6 +72,12 @@ public sealed class AppState
                 if (ActiveWorkspaceByMonitor.Keys.All(k =>
                         !string.Equals(k, device, StringComparison.OrdinalIgnoreCase)))
                     ActiveWorkspaceByMonitor[device] = active;
+            }
+
+            foreach (var (index, output) in previous.OutputByWorkspace)
+            {
+                if (!OutputByWorkspace.ContainsKey(index))
+                    OutputByWorkspace[index] = output;
             }
         }
 

@@ -10,134 +10,238 @@ public sealed class WorkspaceManagerTests
     private static LayoutOptions NoGaps() => new() { OuterMargin = 0, InnerGap = 0 };
 
     [Fact]
-    public void Initially_Workspace1IsActive()
+    public void Initially_EachOutputGetsAConsecutiveWorkspace()
     {
         var manager = new WorkspaceManager();
 
-        Assert.Equal(1, manager.ActiveIndex);
-        Assert.Equal("1", manager.Active.Name);
+        Assert.Equal(1, manager.ActiveOn("a").Index);
+        Assert.Equal("a", manager.TryGet(1)?.OutputName);
+        Assert.Equal(2, manager.ActiveOn("b").Index);
+        Assert.Equal("b", manager.TryGet(2)?.OutputName);
     }
 
     [Fact]
-    public void SwitchTo_ChangesActiveWorkspace()
+    public void SwitchTo_NewWorkspace_CreatedOnFocusedOutput()
     {
         var manager = new WorkspaceManager();
 
-        Assert.True(manager.SwitchTo(3));
-        Assert.Equal(3, manager.ActiveIndex);
-        Assert.Equal("3", manager.Active.Name);
+        var result = manager.SwitchTo(3, "b");
+
+        Assert.True(result.Changed);
+        Assert.Equal("b", result.Output);
+        Assert.Equal(3, manager.GetActiveIndex("b"));
+        Assert.Equal("b", manager.TryGet(3)?.OutputName);
     }
 
     [Fact]
-    public void SwitchTo_SameWorkspace_ReturnsFalse()
+    public void SwitchTo_ExistingWorkspace_ActivatesItOnItsBoundOutput()
     {
         var manager = new WorkspaceManager();
+        manager.SwitchTo(2, "a");
+        manager.SwitchTo(1, "a");
 
-        Assert.False(manager.SwitchTo(1));
-        Assert.Equal(1, manager.ActiveIndex);
+        var result = manager.SwitchTo(2, "b");
+
+        Assert.True(result.Changed);
+        Assert.Equal("a", result.Output);
+        Assert.Equal(2, manager.GetActiveIndex("a"));
+        Assert.Null(manager.GetActiveIndex("b"));
     }
 
     [Fact]
-    public void AddWindow_GoesToActiveWorkspace()
+    public void SwitchTo_AlreadyActiveWorkspace_ReportedUnchanged()
     {
         var manager = new WorkspaceManager();
-        manager.SwitchTo(2);
+        manager.SwitchTo(2, "a");
 
-        manager.AddWindow(100);
+        var result = manager.SwitchTo(2, "b");
 
-        Assert.Equal(new[] { 100L }, manager.Get(2).WindowHandles);
-        Assert.Empty(manager.Get(1).WindowHandles);
+        Assert.False(result.Changed);
+        Assert.Equal(2, manager.GetActiveIndex("a"));
     }
 
     [Fact]
-    public void AddWindowTo_PlacesWindowInGivenWorkspace_NotActive()
+    public void MoveActiveWorkspaceToOutput_MovesWorkspaceAndActivatesReplacement()
     {
         var manager = new WorkspaceManager();
-        manager.AddWindow(100);
+        manager.ActiveOn("a");
+        manager.ActiveOn("b");
+        manager.SwitchTo(3, "a");
 
-        manager.AddWindowTo(3, 200);
+        var result = manager.MoveActiveWorkspaceToOutput("a", "b");
 
-        Assert.Equal(new[] { 100L }, manager.Get(1).WindowHandles);
-        Assert.Equal(new[] { 200L }, manager.Get(3).WindowHandles);
-        Assert.Equal(1, manager.ActiveIndex);
+        Assert.NotNull(result);
+        Assert.Equal(3, result.MovedIndex);
+        Assert.Equal("b", result.TargetOutput);
+        Assert.Equal(1, result.SourceReplacementIndex);
+        Assert.Equal("b", manager.TryGet(3)?.OutputName);
+        Assert.Equal(3, manager.GetActiveIndex("b"));
+        Assert.Equal(1, manager.GetActiveIndex("a"));
     }
 
     [Fact]
-    public void RemoveWindow_SearchesAllWorkspaces()
+    public void MoveActiveWorkspaceToOutput_CreatesReplacementWhenSourceEmpties()
     {
         var manager = new WorkspaceManager();
-        manager.AddWindow(100);
-        manager.SwitchTo(2);
-        manager.AddWindow(200);
+        manager.ActiveOn("a");
 
-        Assert.True(manager.RemoveWindow(100));
+        var result = manager.MoveActiveWorkspaceToOutput("a", "b");
 
-        Assert.Empty(manager.Get(1).WindowHandles);
-        Assert.Equal(new[] { 200L }, manager.Get(2).WindowHandles);
+        Assert.NotNull(result);
+        Assert.Equal(1, result.MovedIndex);
+        Assert.Equal(2, result.SourceReplacementIndex);
+        Assert.Equal("a", manager.TryGet(2)?.OutputName);
+        Assert.Equal(2, manager.GetActiveIndex("a"));
+        Assert.Equal(1, manager.GetActiveIndex("b"));
+    }
+
+    [Fact]
+    public void MoveActiveWorkspaceToOutput_SameOutput_ReturnsNull()
+    {
+        var manager = new WorkspaceManager();
+
+        Assert.Null(manager.MoveActiveWorkspaceToOutput("a", "A"));
     }
 
     [Fact]
     public void MoveFocusedTo_MovesFocusedWindowToTargetWorkspace()
     {
         var manager = new WorkspaceManager();
-        manager.AddWindow(100);
-        manager.AddWindow(200);
+        manager.AddWindow(100, "a");
+        manager.AddWindow(200, "a");
 
-        var moved = manager.MoveFocusedTo(2);
+        var move = manager.MoveFocusedTo(2, "a");
 
-        Assert.Equal(200, moved);
-        Assert.Equal(new[] { 100L }, manager.Get(1).WindowHandles);
-        Assert.Equal(new[] { 200L }, manager.Get(2).WindowHandles);
+        Assert.NotNull(move);
+        Assert.Equal(200, move.WindowHandle);
+        Assert.Equal(2, move.Target.Index);
+        Assert.Equal(new[] { 100L }, manager.TryGet(1)?.WindowHandles);
+        Assert.Equal(new[] { 200L }, manager.TryGet(2)?.WindowHandles);
     }
 
     [Fact]
-    public void MoveFocusedTo_FallsBackFocusToRemainingWindow()
+    public void MoveFocusedTo_TargetCreatedOnSourceOutput()
     {
         var manager = new WorkspaceManager();
-        manager.AddWindow(100);
-        manager.AddWindow(200);
+        manager.AddWindow(100, "a");
 
-        manager.MoveFocusedTo(2);
+        var move = manager.MoveFocusedTo(2, "a");
 
-        Assert.Equal(100, manager.Get(1).FocusedWindowHandle);
-        Assert.Equal(200, manager.Get(2).FocusedWindowHandle);
+        Assert.Equal("a", move?.Target.OutputName);
     }
 
     [Fact]
     public void MoveFocusedTo_SameWorkspace_ReturnsNull()
     {
         var manager = new WorkspaceManager();
-        manager.AddWindow(100);
+        manager.AddWindow(100, "a");
 
-        Assert.Null(manager.MoveFocusedTo(1));
-        Assert.Equal(new[] { 100L }, manager.Get(1).WindowHandles);
+        Assert.Null(manager.MoveFocusedTo(1, "a"));
+        Assert.Equal(new[] { 100L }, manager.TryGet(1)?.WindowHandles);
+    }
+
+    [Fact]
+    public void MoveFocusedTo_FallsBackFocusToRemainingWindow()
+    {
+        var manager = new WorkspaceManager();
+        manager.AddWindow(100, "a");
+        manager.AddWindow(200, "a");
+
+        manager.MoveFocusedTo(2, "a");
+
+        Assert.Equal(100, manager.TryGet(1)?.FocusedWindowHandle);
+        Assert.Equal(200, manager.TryGet(2)?.FocusedWindowHandle);
+    }
+
+    [Fact]
+    public void AddWindow_GoesToActiveWorkspaceOfOutput()
+    {
+        var manager = new WorkspaceManager();
+        manager.SwitchTo(2, "a");
+
+        manager.AddWindow(100, "a");
+
+        Assert.Equal(new[] { 100L }, manager.TryGet(2)?.WindowHandles);
+        Assert.Empty(manager.TryGet(1)?.WindowHandles ?? Array.Empty<long>());
+    }
+
+    [Fact]
+    public void AddWindowTo_PlacesWindowInGivenWorkspace_NotActive()
+    {
+        var manager = new WorkspaceManager();
+        manager.AddWindow(100, "a");
+
+        manager.AddWindowTo(3, 200, "a");
+
+        Assert.Equal(new[] { 100L }, manager.TryGet(1)?.WindowHandles);
+        Assert.Equal(new[] { 200L }, manager.TryGet(3)?.WindowHandles);
+        Assert.Equal("a", manager.TryGet(3)?.OutputName);
+        Assert.Equal(1, manager.GetActiveIndex("a"));
+    }
+
+    [Fact]
+    public void RemoveWindow_SearchesAllWorkspaces()
+    {
+        var manager = new WorkspaceManager();
+        manager.AddWindow(100, "a");
+        manager.SwitchTo(2, "a");
+        manager.AddWindow(200, "a");
+
+        Assert.True(manager.RemoveWindow(100));
+
+        Assert.Empty(manager.TryGet(1)?.WindowHandles ?? Array.Empty<long>());
+        Assert.Equal(new[] { 200L }, manager.TryGet(2)?.WindowHandles);
     }
 
     [Fact]
     public void SetFocusedWindow_UpdatesOwningWorkspace()
     {
         var manager = new WorkspaceManager();
-        manager.AddWindow(100);
-        manager.SwitchTo(2);
-        manager.AddWindow(200);
+        manager.AddWindow(100, "a");
+        manager.SwitchTo(2, "a");
+        manager.AddWindow(200, "a");
 
         Assert.True(manager.SetFocusedWindow(100));
-        Assert.Equal(100, manager.Get(1).FocusedWindowHandle);
-        Assert.Equal(2, manager.ActiveIndex);
+        Assert.Equal(100, manager.TryGet(1)?.FocusedWindowHandle);
+        Assert.Equal(2, manager.GetActiveIndex("a"));
     }
 
     [Fact]
-    public void ComputeActiveLayout_OnlyIncludesActiveWorkspace()
+    public void ComputeActiveLayout_OnlyIncludesActiveWorkspaceOfOutput()
     {
         var manager = new WorkspaceManager();
-        manager.AddWindow(100);
-        manager.SwitchTo(2);
-        manager.AddWindow(200);
+        manager.AddWindow(100, "a");
+        manager.SwitchTo(2, "a");
+        manager.AddWindow(200, "a");
 
-        var layout = manager.ComputeActiveLayout(Monitor, NoGaps());
+        var layout = manager.ComputeActiveLayout("a", Monitor, NoGaps());
 
         var assignment = Assert.Single(layout);
         Assert.Equal(200, assignment.WindowHandle);
         Assert.Equal(Monitor, assignment.Rect);
+    }
+
+    [Fact]
+    public void FocusRelative_MovesFocusOnActiveWorkspaceOfOutput()
+    {
+        var manager = new WorkspaceManager();
+        manager.AddWindow(100, "a");
+        manager.AddWindow(200, "a");
+
+        Assert.True(manager.FocusRelative("a", 1));
+        Assert.Equal(100, manager.ActiveOn("a").FocusedWindowHandle);
+    }
+
+    [Fact]
+    public void MoveFocused_MovesWithinActiveWorkspaceOfOutput()
+    {
+        var manager = new WorkspaceManager();
+        manager.AddWindow(100, "a");
+        manager.AddWindow(200, "a");
+        manager.AddWindow(300, "a");
+
+        Assert.True(manager.MoveFocused("a", -1));
+
+        Assert.Equal(new[] { 100L, 300L, 200L }, manager.TryGet(1)?.WindowHandles);
     }
 }
