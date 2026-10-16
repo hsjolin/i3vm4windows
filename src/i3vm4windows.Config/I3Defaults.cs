@@ -21,6 +21,7 @@ public static class I3Defaults
         bindsym $mod+q kill
         bindsym $mod+y reload
         bindsym $mod+x move workspace to output next
+        bindsym $mod+Shift+Space floating toggle
 
         # Switch to workspace 1..9.
         bindsym $mod+1 workspace 1

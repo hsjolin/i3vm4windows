@@ -59,6 +59,12 @@ picker, which Chromium-styled windows would otherwise have tiled:
 for_window [class="Chrome_WidgetWin_1" title="^Vivaldi$"] floating enable
 ```
 
+The focused window toggles between tiling and floating with
+`floating toggle` (default `Win+Shift+Space`): a tiled window is released
+to move and resize freely where it stands, a floating window joins the
+tiling of the display it is on. Floating windows keep their place across
+workspace switches.
+
 ## Default key bindings (v0.4)
 
 Workspaces are global and each is bound to the display it was created on;

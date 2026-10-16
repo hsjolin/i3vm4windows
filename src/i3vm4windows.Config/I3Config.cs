@@ -30,6 +30,7 @@ public enum ConfigAction
     Refresh,
     MoveWorkspaceToNextMonitor,
     Launch,
+    FloatingToggle,
 }
 
 /// <summary>

@@ -82,6 +82,7 @@ public class I3ConfigParserTests
     [InlineData("kill", ConfigAction.CloseFocused)]
     [InlineData("split toggle", ConfigAction.ToggleOrientation)]
     [InlineData("layout toggle split", ConfigAction.ToggleOrientation)]
+    [InlineData("floating toggle", ConfigAction.FloatingToggle)]
     [InlineData("reload", ConfigAction.Refresh)]
     [InlineData("move workspace to output next", ConfigAction.MoveWorkspaceToNextMonitor)]
     public void Known_commands_map_to_actions(string command, ConfigAction expected)
@@ -229,7 +230,7 @@ public class I3ConfigParserTests
         var config = I3ConfigParser.Parse(I3Defaults.Text);
 
         Assert.Empty(config.Warnings);
-        Assert.Equal(26, config.Bindings.Count);
+        Assert.Equal(27, config.Bindings.Count);
 
         var switchWorkspace = config.Bindings.Where(b => b.Action == ConfigAction.SwitchWorkspace);
         Assert.Equal(9, switchWorkspace.Count());

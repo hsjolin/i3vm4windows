@@ -154,6 +154,9 @@ public partial class App : System.Windows.Application
             case ConfigAction.Launch:
                 LaunchProcess(binding.Command);
                 break;
+            case ConfigAction.FloatingToggle:
+                _windowManager.ToggleFloating();
+                break;
         }
     }
 

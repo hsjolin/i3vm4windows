@@ -176,6 +176,33 @@ internal sealed class WindowManager : IDisposable
         ApplyLayout();
     }
 
+    /// <summary>
+    /// Toggles the focused window between the tiling and floating: a managed
+    /// window is released to move and resize freely where it stands, a
+    /// floating window joins the tiling of the display it is on.
+    /// </summary>
+    public void ToggleFloating()
+    {
+        var foreground = Win32.GetForegroundWindow();
+        if (foreground == IntPtr.Zero)
+            return;
+
+        var handle = foreground.ToInt64();
+        if (_managedHandles.Contains(handle))
+        {
+            UnmanageWindow(handle);
+            return;
+        }
+
+        if (!IsTileable(foreground, requireVisible: true))
+            return;
+
+        _workspaces.AddWindow(handle, ActiveMonitor().DeviceName);
+        _managedHandles.Add(handle);
+        _placements.Remove(handle);
+        ApplyLayout();
+    }
+
     public void CloseFocused()
     {
         if (_workspaces.ActiveOn(ActiveMonitor().DeviceName).FocusedWindowHandle is { } handle)

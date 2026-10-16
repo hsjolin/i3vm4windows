@@ -309,6 +309,9 @@ public static class I3ConfigParser
             case ["layout", "toggle", "split"]:
                 action = ConfigAction.ToggleOrientation;
                 return true;
+            case ["floating", "toggle"]:
+                action = ConfigAction.FloatingToggle;
+                return true;
             case ["reload"]:
                 action = ConfigAction.Refresh;
                 return true;
