@@ -13,7 +13,13 @@ The project is split in two layers:
 | `src/i3vm4windows.App` | WPF host process. Discovers top-level windows via `EnumWindows`, tracks show/hide/destroy through `SetWinEventHook`, applies the computed layout with `SetWindowPos`, and registers global hotkeys via `RegisterHotKey` on a message-only window. Runs from the system tray. |
 | `tests/i3vm4windows.Core.Tests` | xUnit tests for the layout engine. |
 
-## Default key bindings (v0.1)
+## Default key bindings (v0.2)
+
+Each monitor has its own independent set of workspaces. Workspace hotkeys act
+on the monitor that shows the foreground window (falling back to the primary
+monitor). Windows that are dragged to another monitor, or whose monitor is
+disconnected, migrate to the active workspace of the monitor they end up on
+after the next rescan (Win+Y or automatic).
 
 | Keys | Action |
 |---|---|
@@ -46,7 +52,8 @@ From WSL you can use the Windows SDK directly:
 
 ## Limitations / roadmap
 
-- v0.1 tiles windows on the primary monitor's work area only.
+- Workspaces are per monitor: switching to a workspace never moves windows
+  between screens (a future release may adopt i3's output-bound workspaces).
 - Elevated windows cannot be tiled by a non-elevated process.
-- Planned: multi-monitor support, manual resizing (i3-style grow/shrink),
-  floating windows, a status bar, and a configuration file for gaps and key bindings.
+- Planned: manual resizing (i3-style grow/shrink), floating windows, a status
+  bar, and a configuration file for gaps and key bindings.

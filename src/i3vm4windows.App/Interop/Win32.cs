@@ -29,6 +29,13 @@ internal static class Win32
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    public struct POINT
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     public struct MONITORINFO
     {
         public int cbSize;
@@ -39,11 +46,23 @@ internal static class Win32
 
     public delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
 
+    public delegate bool MonitorEnumProc(IntPtr monitor, IntPtr hdc, IntPtr clipRect, IntPtr lParam);
+
     public delegate void WinEventDelegate(
         IntPtr hook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint thread, uint time);
 
     [DllImport("user32.dll")]
     public static extern bool EnumWindows(EnumWindowsProc proc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumDisplayMonitors(
+        IntPtr hdc, IntPtr clipRect, MonitorEnumProc proc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr MonitorFromPoint(POINT pt, uint flags);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetCursorPos(out POINT pt);
 
     [DllImport("user32.dll")]
     public static extern bool IsWindow(IntPtr hwnd);
@@ -124,6 +143,9 @@ internal static class Win32
     public const int DWMWA_CLOAKED = 14;
 
     public const uint MONITOR_DEFAULTTOPRIMARY = 1;
+    public const uint MONITOR_DEFAULTTONEAREST = 2;
+
+    public const uint MONITORINFOF_PRIMARY = 1;
 
     public const uint EVENT_OBJECT_DESTROY = 0x0001;
     public const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
