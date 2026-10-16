@@ -39,6 +39,7 @@ internal sealed class WindowManager : IDisposable
     private readonly LayoutOptions _options = new() { OuterMargin = 8, InnerGap = 8 };
     private readonly HashSet<long> _managedHandles = new();
     private readonly HashSet<long> _hiddenByUs = new();
+    private readonly WorkspaceNotifier _notifier = new();
     private readonly DispatcherTimer _refreshTimer;
     private readonly uint _ownProcessId;
     private readonly Win32.WinEventDelegate _winEventDelegate;
@@ -213,6 +214,10 @@ internal sealed class WindowManager : IDisposable
 
         ApplyLayout();
 
+        // Feedback even when the switch was a no-op: the display shows which
+        // workspace is active.
+        NotifyActiveWorkspace(result.Changes[0].Output);
+
         if (_workspaces.TryGet(index)?.FocusedWindowHandle is { } focused)
             Win32.SetForegroundWindow(new IntPtr(focused));
     }
@@ -267,9 +272,35 @@ internal sealed class WindowManager : IDisposable
         ShowAllWindows(move.SourceReplacementIndex);
 
         ApplyLayout();
+        NotifyActiveWorkspace(target.DeviceName);
 
         if (_workspaces.TryGet(move.MovedIndex)?.FocusedWindowHandle is { } focused)
             Win32.SetForegroundWindow(new IntPtr(focused));
+    }
+
+    /// <summary>
+    /// Shows a brief display of the workspaces bound to the output with the
+    /// active one highlighted.
+    /// </summary>
+    private void NotifyActiveWorkspace(string deviceName)
+    {
+        if (_monitors.Values.FirstOrDefault(m =>
+                string.Equals(m.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase)) is not { } monitor)
+            return;
+
+        var workspaces = _workspaces.OutputBindings
+            .Where(pair => string.Equals(pair.Value, deviceName, StringComparison.OrdinalIgnoreCase))
+            .Select(pair => pair.Key)
+            .OrderBy(index => index)
+            .ToList();
+        var active = _workspaces.ActiveOn(deviceName).Index;
+        if (!workspaces.Contains(active))
+        {
+            workspaces.Add(active);
+            workspaces.Sort();
+        }
+
+        _notifier.Show(monitor.WorkArea, workspaces, active);
     }
 
     public void Dispose()
@@ -294,6 +325,8 @@ internal sealed class WindowManager : IDisposable
             Win32.UnhookWinEvent(_winEventHook);
             _winEventHook = IntPtr.Zero;
         }
+
+        _notifier.Dispose();
     }
 
     private void OnWinEvent(

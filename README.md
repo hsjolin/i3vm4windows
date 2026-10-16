@@ -37,6 +37,10 @@ triggers one of the app's actions or is consumed — shell shortcuts such as
 Win+L, Win+D, Win+E and Win+number taskbar activation are disabled
 (Ctrl+Esc still opens the Start menu).
 
+Whenever the active workspace of a display changes (Win+N, Win+X), a brief
+on-screen display shows the workspaces bound to that display with the
+active one highlighted, centered near the bottom of the screen.
+
 Managed windows are locked to their tiled position: moving a window (or
 maximizing it) snaps back to its rectangle, and resizing is only allowed
 along the split axis — the width in horizontal splits, the height in vertical

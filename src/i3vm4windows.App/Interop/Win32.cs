@@ -163,6 +163,9 @@ internal static class Win32
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     public static extern nint GetWindowLongPtr(IntPtr hwnd, int index);
 
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    public static extern nint SetWindowLongPtr(IntPtr hwnd, int index, nint value);
+
     [DllImport("user32.dll")]
     public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
 
@@ -184,6 +187,7 @@ internal static class Win32
     public const int GWL_STYLE = -16;
     public const int WS_EX_TOOLWINDOW = 0x00000080;
     public const long WS_EX_NOACTIVATE = 0x08000000;
+    public const long WS_EX_TRANSPARENT = 0x00000020;
     public const long WS_POPUP = 0x80000000;
     public const long WS_CAPTION = 0x00C00000;
 
