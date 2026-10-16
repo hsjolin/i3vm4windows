@@ -32,6 +32,13 @@ internal sealed class HotkeyHost : IDisposable
     private Win32.LowLevelKeyboardProc? _hookProc;
     private IntPtr _llHook;
     private bool _winKeyDown;
+    private long _winKeyDownAt;
+
+    /// <summary>
+    /// Safety valve for a Win release the hook never saw (e.g. a session
+    /// switch mid-press): nobody holds the Win key this long physically.
+    /// </summary>
+    private const long WinHoldTimeoutMs = 20_000;
 
     public void Start(Action<int> onHotkey)
     {
@@ -135,25 +142,29 @@ internal sealed class HotkeyHost : IDisposable
             var keyDown = message is Win32.WM_KEYDOWN or Win32.WM_SYSKEYDOWN;
             var keyUp = message is Win32.WM_KEYUP or Win32.WM_SYSKEYUP;
 
-            // Self-heal a stuck Win key (e.g. a missed release across a
-            // session switch) so normal typing is never swallowed.
-            if (_winKeyDown && !IsDown(Win32.VK_LWIN) && !IsDown(Win32.VK_RWIN))
+            // Safety valve for a stuck Win state.
+            if (_winKeyDown && Environment.TickCount64 - _winKeyDownAt > WinHoldTimeoutMs)
                 _winKeyDown = false;
 
             if (data.vkCode is Win32.VK_LWIN or Win32.VK_RWIN)
             {
+                // The app owns the Win key: the system never sees it at all,
+                // so the Start menu cannot open and its key state cannot get
+                // stuck half-pressed.
                 if (keyDown)
                 {
                     _winKeyDown = true;
+                    _winKeyDownAt = Environment.TickCount64;
                 }
                 else if (keyUp)
                 {
-                    // The app owns the Win key: the Start menu stays closed.
                     _winKeyDown = false;
-                    return new IntPtr(1);
                 }
+
+                return new IntPtr(1);
             }
-            else if (_winKeyDown && !IsModifier(data.vkCode))
+
+            if (_winKeyDown && !IsModifier(data.vkCode))
             {
                 // Every key pressed while Win is held belongs to the app:
                 // known combinations dispatch their action, anything else is
@@ -188,10 +199,12 @@ internal sealed class HotkeyHost : IDisposable
     private static bool IsModifier(uint virtualKey) =>
         virtualKey is Win32.VK_SHIFT or Win32.VK_CONTROL or Win32.VK_MENU;
 
-    private static Win32.Modifiers HeldModifiers()
+    /// <summary>The modifier state as seen by the hook: the Win key never
+    /// reaches the system, so its bit comes from the hook's own tracking.</summary>
+    private Win32.Modifiers HeldModifiers()
     {
         var modifiers = Win32.Modifiers.None;
-        if (IsDown(Win32.VK_LWIN) || IsDown(Win32.VK_RWIN))
+        if (_winKeyDown)
             modifiers |= Win32.Modifiers.Win;
         if (IsDown(Win32.VK_SHIFT))
             modifiers |= Win32.Modifiers.Shift;
