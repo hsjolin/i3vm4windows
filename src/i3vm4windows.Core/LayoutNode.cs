@@ -13,6 +13,12 @@ public enum SplitOrientation
 public abstract class LayoutNode
 {
     public SplitNode? Parent { get; internal set; }
+
+    /// <summary>
+    /// Relative share of the parent split's span along its axis. Siblings are
+    /// sized proportionally; 1 for every node by default.
+    /// </summary>
+    public double Weight { get; set; } = 1;
 }
 
 /// <summary>A leaf node representing a managed window.</summary>
@@ -35,6 +41,13 @@ public sealed class SplitNode : LayoutNode
     public SplitOrientation Orientation { get; set; }
 
     public List<LayoutNode> Children { get; } = new();
+
+    /// <summary>
+    /// The span along the split axis (in pixels, gaps excluded) this split
+    /// distributed at the last layout computation; used to translate manual
+    /// resize requests into sibling weights.
+    /// </summary>
+    public double LastUsableSpan { get; internal set; }
 
     public SplitNode(SplitOrientation orientation)
     {

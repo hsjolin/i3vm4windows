@@ -3,6 +3,13 @@ namespace i3vm4windows.Core;
 /// <summary>A window handle paired with the screen rectangle it should occupy.</summary>
 public sealed record AssignedRect(long WindowHandle, Rect Rect);
 
+/// <summary>The layout axis a manual resize applies to.</summary>
+public enum ResizeAxis
+{
+    Width,
+    Height,
+}
+
 /// <summary>
 /// Pure, unit-testable layout engine that maintains an i3-style tree
 /// (workspace -> split containers -> window leaves) and computes screen
@@ -10,6 +17,10 @@ public sealed record AssignedRect(long WindowHandle, Rect Rect);
 /// </summary>
 public sealed class TilingEngine
 {
+    private const double MinWeight = 0.01;
+
+    /// <summary>The smallest extent a manually resized window may keep.</summary>
+    public const int MinWindowExtent = 32;
     /// <summary>
     /// Adds a window to the workspace, placed right after the focused window
     /// in its parent split (i3-style "open next to the focused window").
@@ -136,6 +147,40 @@ public sealed class TilingEngine
             : SplitOrientation.Horizontal;
     }
 
+    /// <summary>
+    /// Applies a manual resize of a window: the window keeps the requested
+    /// size along its parent split's axis and its siblings share the rest,
+    /// keeping their relative proportions. Returns false when the resize is
+    /// not allowed, e.g. across the split axis, below the minimum size, or
+    /// in a split with a single child.
+    /// </summary>
+    public bool ApplyUserResize(Workspace workspace, long windowHandle, ResizeAxis axis, int requestedSize)
+    {
+        if (Find(workspace.Root, windowHandle) is not { } node || node.Parent is not { } parent)
+            return false;
+
+        var horizontal = parent.Orientation == SplitOrientation.Horizontal;
+        if ((axis == ResizeAxis.Width) != horizontal || parent.Children.Count < 2)
+            return false;
+
+        var span = parent.LastUsableSpan;
+        var max = span - MinWindowExtent * (parent.Children.Count - 1);
+        if (span <= 0 || requestedSize < MinWindowExtent || requestedSize > max)
+            return false;
+
+        // Weights are in pixel units: the resized window takes the requested
+        // extent, the siblings absorb the rest proportionally.
+        node.Weight = requestedSize;
+
+        var siblingSpan = span - requestedSize;
+        var siblings = parent.Children.Where(child => !ReferenceEquals(child, node)).ToList();
+        var oldTotal = siblings.Sum(child => Math.Max(child.Weight, MinWeight));
+        foreach (var sibling in siblings)
+            sibling.Weight = Math.Max(sibling.Weight, MinWeight) * siblingSpan / oldTotal;
+
+        return true;
+    }
+
     private static void ComputeSplit(
         SplitNode node, Rect rect, LayoutOptions options, List<AssignedRect> result)
     {
@@ -144,13 +189,32 @@ public sealed class TilingEngine
 
         var horizontal = node.Orientation == SplitOrientation.Horizontal;
         var span = (horizontal ? rect.Width : rect.Height) - options.InnerGap * (node.Children.Count - 1);
-        var baseSize = span / node.Children.Count;
-        var remainder = span - baseSize * node.Children.Count;
+        node.LastUsableSpan = span;
+
+        // Children share the span proportionally to their weights; leftover
+        // pixels go to the children with the largest fractional parts.
+        var totalWeight = node.Children.Sum(child => Math.Max(child.Weight, MinWeight));
+        var sizes = new int[node.Children.Count];
+        var remainders = new double[node.Children.Count];
+        for (var i = 0; i < node.Children.Count; i++)
+        {
+            var exact = span * Math.Max(node.Children[i].Weight, MinWeight) / totalWeight;
+            sizes[i] = (int)exact;
+            remainders[i] = exact - sizes[i];
+        }
+
+        var leftover = span - sizes.Sum();
+        foreach (var i in Enumerable.Range(0, node.Children.Count)
+                     .OrderByDescending(i => remainders[i])
+                     .Take(leftover))
+        {
+            sizes[i]++;
+        }
 
         var position = horizontal ? rect.X : rect.Y;
         for (var i = 0; i < node.Children.Count; i++)
         {
-            var size = baseSize + (i < remainder ? 1 : 0);
+            var size = sizes[i];
             var slice = horizontal
                 ? new Rect(position, rect.Y, size, rect.Height)
                 : new Rect(rect.X, position, rect.Width, size);

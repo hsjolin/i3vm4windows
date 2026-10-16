@@ -34,6 +34,13 @@ the workspace that is active there after the next rescan (Win+Y or automatic).
 Note: registering Win-based hotkeys overrides some Windows shell shortcuts
 (for example Win+Left/Right snapping and Win+number taskbar activation).
 
+Managed windows are locked to their tiled position: moving a window (or
+maximizing it) snaps back to its rectangle, and resizing is only allowed
+along the split axis — the width in horizontal splits, the height in vertical
+splits. A permitted resize is kept and the sibling windows in the split adapt
+proportionally; everything else reverts. Use Win+Shift+Left/Right to move
+windows within the tiling instead.
+
 ## Display changes
 
 The app reacts to display configuration changes (a monitor being connected,
@@ -84,6 +91,8 @@ From WSL you can use the Windows SDK directly:
 
 - Switching to a workspace activates it on the display it is bound to, and
   never moves workspaces between displays on its own (Win+X does that).
+- Manual resizes are not persisted yet: after a restart, windows are tiled
+  with equal shares again.
 - Elevated windows cannot be tiled by a non-elevated process.
-- Planned: manual resizing (i3-style grow/shrink), floating windows, a status
-  bar, and a configuration file for gaps and key bindings.
+- Planned: keyboard resizing (i3-style grow/shrink hotkeys), floating windows,
+  a status bar, and a configuration file for gaps and key bindings.

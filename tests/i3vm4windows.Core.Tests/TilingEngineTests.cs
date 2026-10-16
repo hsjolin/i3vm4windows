@@ -254,4 +254,79 @@ public sealed class TilingEngineTests
             Assert.Equal(SplitOrientation.Horizontal, workspace.Root.Orientation);
         }
     }
+
+    public sealed class ResizeTests
+    {
+        [Fact]
+        public void WidthResize_HorizontalSplit_WindowKeepsSizeSiblingsAdapt()
+        {
+            var (workspace, engine) = Create(100, 200);
+            engine.ComputeLayout(workspace, Monitor, NoGaps());
+
+            Assert.True(engine.ApplyUserResize(workspace, 100, ResizeAxis.Width, 600));
+
+            var layout = engine.ComputeLayout(workspace, Monitor, NoGaps());
+            Assert.Equal(600, layout[0].Rect.Width);
+            Assert.Equal(1320, layout[1].Rect.Width);
+        }
+
+        [Fact]
+        public void HeightResize_VerticalSplit_WindowKeepsSizeSiblingsAdapt()
+        {
+            var (workspace, engine) = Create(100, 200);
+            engine.ToggleOrientation(workspace);
+            engine.ComputeLayout(workspace, Monitor, NoGaps());
+
+            Assert.True(engine.ApplyUserResize(workspace, 100, ResizeAxis.Height, 400));
+
+            var layout = engine.ComputeLayout(workspace, Monitor, NoGaps());
+            Assert.Equal(400, layout[0].Rect.Height);
+            Assert.Equal(680, layout[1].Rect.Height);
+        }
+
+        [Fact]
+        public void Resize_AcrossSplitAxis_ReturnsFalse()
+        {
+            var (workspace, engine) = Create(100, 200);
+            engine.ComputeLayout(workspace, Monitor, NoGaps());
+
+            Assert.False(engine.ApplyUserResize(workspace, 100, ResizeAxis.Height, 500));
+        }
+
+        [Fact]
+        public void Resize_SingleWindow_ReturnsFalse()
+        {
+            var (workspace, engine) = Create(100);
+            engine.ComputeLayout(workspace, Monitor, NoGaps());
+
+            Assert.False(engine.ApplyUserResize(workspace, 100, ResizeAxis.Width, 600));
+        }
+
+        [Fact]
+        public void Resize_TooSmall_ReturnsFalse()
+        {
+            var (workspace, engine) = Create(100, 200);
+            engine.ComputeLayout(workspace, Monitor, NoGaps());
+
+            Assert.False(engine.ApplyUserResize(workspace, 100, ResizeAxis.Width, 10));
+        }
+
+        [Fact]
+        public void Resize_TooLarge_ReturnsFalse()
+        {
+            var (workspace, engine) = Create(100, 200);
+            engine.ComputeLayout(workspace, Monitor, NoGaps());
+
+            Assert.False(engine.ApplyUserResize(workspace, 100, ResizeAxis.Width, 1900));
+        }
+
+        [Fact]
+        public void Resize_UnknownWindow_ReturnsFalse()
+        {
+            var (workspace, engine) = Create(100, 200);
+            engine.ComputeLayout(workspace, Monitor, NoGaps());
+
+            Assert.False(engine.ApplyUserResize(workspace, 999, ResizeAxis.Width, 600));
+        }
+    }
 }

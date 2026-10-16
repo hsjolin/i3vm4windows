@@ -168,6 +168,14 @@ public sealed class WorkspaceManager
     public void AddWindowTo(int index, long windowHandle, string outputName) =>
         _engine.AddWindow(GetOrCreate(index, outputName), windowHandle);
 
+    /// <summary>
+    /// Applies a manual resize of a window in the workspace that owns it:
+    /// sibling windows in the same split adapt proportionally.
+    /// </summary>
+    public bool ApplyUserResize(long windowHandle, ResizeAxis axis, int requestedSize) =>
+        FindOwner(windowHandle) is { } workspace &&
+        _engine.ApplyUserResize(workspace, windowHandle, axis, requestedSize);
+
     /// <summary>Removes the window from whichever workspace owns it.</summary>
     public bool RemoveWindow(long windowHandle)
     {

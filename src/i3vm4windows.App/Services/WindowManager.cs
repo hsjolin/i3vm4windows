@@ -25,6 +25,7 @@ internal sealed class WindowManager : IDisposable
 
     private readonly WorkspaceManager _workspaces = new();
     private readonly Dictionary<IntPtr, MonitorInfo> _monitors = new();
+    private readonly Dictionary<long, Rect> _assignedRects = new();
     private readonly LayoutOptions _options = new() { OuterMargin = 8, InnerGap = 8 };
     private readonly HashSet<long> _managedHandles = new();
     private readonly DispatcherTimer _refreshTimer;
@@ -55,7 +56,7 @@ internal sealed class WindowManager : IDisposable
     {
         _winEventHook = Win32.SetWinEventHook(
             Win32.EVENT_OBJECT_DESTROY,
-            Win32.EVENT_OBJECT_SHOW,
+            Win32.EVENT_OBJECT_LOCATIONCHANGE,
             IntPtr.Zero,
             _winEventDelegate,
             0,
@@ -77,8 +78,14 @@ internal sealed class WindowManager : IDisposable
         if (_disposed)
             return;
 
-        if (!_refreshTimer.IsEnabled)
-            _refreshTimer.Start();
+        DebounceRefresh();
+    }
+
+    /// <summary>Restarts the refresh timer so it fires once changes settle.</summary>
+    private void DebounceRefresh()
+    {
+        _refreshTimer.Stop();
+        _refreshTimer.Start();
     }
 
     public void RefreshWindows()
@@ -89,6 +96,7 @@ internal sealed class WindowManager : IDisposable
         ForgetDeadWindows();
         ReconcileMonitors();
         ReassignWindows();
+        ReconcileUserWindowChanges();
         DiscoverNewWindows();
         ApplyLayout();
         SaveState();
@@ -100,7 +108,21 @@ internal sealed class WindowManager : IDisposable
         {
             var assignments = _workspaces.ComputeActiveLayout(monitor.DeviceName, monitor.WorkArea, _options);
             foreach (var (handle, rect) in assignments)
+            {
+                // Skip windows that are already in place: our own SetWindowPos
+                // calls would otherwise re-trigger the refresh cycle.
+                var hwnd = new IntPtr(handle);
+                if (Win32.GetWindowRect(hwnd, out var current) &&
+                    current.Left == rect.X && current.Top == rect.Y &&
+                    current.Right == rect.Right && current.Bottom == rect.Bottom)
+                {
+                    _assignedRects[handle] = rect;
+                    continue;
+                }
+
                 PositionWindow(handle, rect);
+                _assignedRects[handle] = rect;
+            }
         }
     }
 
@@ -246,9 +268,13 @@ internal sealed class WindowManager : IDisposable
                 break;
 
             case Win32.EVENT_OBJECT_SHOW or Win32.EVENT_OBJECT_HIDE or Win32.EVENT_OBJECT_DESTROY:
-                // Batch events instead of rescanning on every single one.
-                if (!_refreshTimer.IsEnabled)
-                    _refreshTimer.Start();
+                DebounceRefresh();
+                break;
+
+            case Win32.EVENT_OBJECT_LOCATIONCHANGE:
+                // Only managed windows matter; everything else moves freely.
+                if (_managedHandles.Contains(hwnd.ToInt64()))
+                    DebounceRefresh();
                 break;
         }
     }
@@ -262,6 +288,7 @@ internal sealed class WindowManager : IDisposable
 
             _workspaces.RemoveWindow(handle);
             _managedHandles.Remove(handle);
+            _assignedRects.Remove(handle);
         }
     }
 
@@ -357,10 +384,48 @@ internal sealed class WindowManager : IDisposable
 
             _workspaces.RemoveWindow(handle);
             _workspaces.AddWindow(handle, device);
+            _assignedRects.Remove(handle);
 
             // The window joined an active workspace; it must not stay hidden.
             if (!Win32.IsWindowVisible(hwnd))
                 Win32.ShowWindow(hwnd, Win32.SW_SHOW);
+        }
+    }
+
+    /// <summary>
+    /// Reacts to windows the user moved or resized manually: a resize along
+    /// the window's split axis is applied so sibling windows adapt, and
+    /// everything else snaps back to the tiled rectangle.
+    /// </summary>
+    private void ReconcileUserWindowChanges()
+    {
+        foreach (var handle in _managedHandles.ToList())
+        {
+            var hwnd = new IntPtr(handle);
+            if (Win32.IsIconic(hwnd) || !Win32.IsWindowVisible(hwnd) ||
+                !_assignedRects.TryGetValue(handle, out var assigned) ||
+                !Win32.GetWindowRect(hwnd, out var current))
+            {
+                continue;
+            }
+
+            var rect = new Rect(
+                current.Left, current.Top, current.Right - current.Left, current.Bottom - current.Top);
+            if (rect == assigned)
+                continue;
+
+            var widthChanged = rect.Width != assigned.Width;
+            var heightChanged = rect.Height != assigned.Height;
+
+            var applied = (widthChanged, heightChanged) switch
+            {
+                (true, false) => _workspaces.ApplyUserResize(handle, ResizeAxis.Width, rect.Width),
+                (false, true) => _workspaces.ApplyUserResize(handle, ResizeAxis.Height, rect.Height),
+                _ => false,
+            };
+
+            if (!applied)
+                PositionWindow(handle, assigned);
         }
     }
 
