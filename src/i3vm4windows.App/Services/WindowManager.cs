@@ -221,6 +221,12 @@ internal sealed class WindowManager : IDisposable
         {
             var hwnd = new IntPtr(hidden);
             Win32.ShowWindow(hwnd, Win32.SW_SHOW);
+
+            // Like i3's floating windows sit above the tiling, a shown
+            // scratchpad window is pinned above the tiled layer.
+            Win32.SetWindowPos(
+                hwnd, Win32.HWND_TOPMOST, 0, 0, 0, 0,
+                Win32.SWP_NOACTIVATE | Win32.SWP_NOMOVE | Win32.SWP_NOSIZE);
             Win32.SetForegroundWindow(hwnd);
         }
     }

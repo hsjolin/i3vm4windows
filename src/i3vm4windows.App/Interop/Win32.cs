@@ -193,6 +193,12 @@ internal static class Win32
 
     public const uint SWP_NOZORDER = 0x0004;
     public const uint SWP_NOACTIVATE = 0x0010;
+    public const uint SWP_NOMOVE = 0x0002;
+    public const uint SWP_NOSIZE = 0x0001;
+
+    /// <summary>Pins a window above every non-topmost window, like i3
+    /// floating windows sit above the tiled layer.</summary>
+    public static readonly IntPtr HWND_TOPMOST = new(-1);
 
     public const int SW_HIDE = 0;
     public const int SW_SHOW = 5;
