@@ -249,6 +249,11 @@ internal sealed class WindowManager : IDisposable
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         SaveState();
 
+        // Without the manager running, a hidden window would be unreachable;
+        // hand every managed window back to the shell visible.
+        foreach (var handle in _managedHandles)
+            Win32.ShowWindow(new IntPtr(handle), Win32.SW_SHOW);
+
         if (_winEventHook != IntPtr.Zero)
         {
             Win32.UnhookWinEvent(_winEventHook);
@@ -353,27 +358,45 @@ internal sealed class WindowManager : IDisposable
         Win32.EnumWindows((hwnd, _) =>
         {
             var handle = hwnd.ToInt64();
-            if (!_managedHandles.Contains(handle) && IsTileable(hwnd))
+            if (_managedHandles.Contains(handle) || !Win32.IsWindow(hwnd))
+                return true;
+
+            // Visible windows join as usual. A hidden window is only adopted
+            // when it exactly matches a remembered placement: that can only be
+            // a window a previous instance parked on an inactive workspace and
+            // never got to show again (e.g. after a crash).
+            var visible = Win32.IsWindowVisible(hwnd);
+            if (!IsTileable(hwnd, requireVisible: false))
+                return true;
+
+            var (exePath, title) = GetWindowIdentity(hwnd);
+            var remembered = visible
+                ? _state?.ResolveWorkspace(exePath, title)
+                : _state?.ResolveWorkspaceExact(exePath, title);
+            if (!visible && remembered is null)
+                return true;
+
+            var state = MonitorStateForWindow(hwnd);
+            if (remembered is >= 1 and <= 9)
             {
-                var state = MonitorStateForWindow(hwnd);
-                var (exePath, title) = GetWindowIdentity(hwnd);
-                var remembered = _state?.ResolveWorkspace(exePath, title);
-
-                if (remembered is >= 1 and <= 9)
+                state.Workspaces.AddWindowTo(remembered.Value, handle);
+                if (state.Workspaces.ActiveIndex == remembered.Value)
                 {
-                    state.Workspaces.AddWindowTo(remembered.Value, handle);
-                    if (state.Workspaces.ActiveIndex != remembered.Value)
-                        Win32.ShowWindow(hwnd, Win32.SW_HIDE);
+                    if (!visible)
+                        Win32.ShowWindow(hwnd, Win32.SW_SHOW);
                 }
-                else
+                else if (visible)
                 {
-                    state.Workspaces.AddWindow(handle);
+                    Win32.ShowWindow(hwnd, Win32.SW_HIDE);
                 }
-
-                _managedHandles.Add(handle);
-                _windowOwners[handle] = state;
+            }
+            else
+            {
+                state.Workspaces.AddWindow(handle);
             }
 
+            _managedHandles.Add(handle);
+            _windowOwners[handle] = state;
             return true;
         }, IntPtr.Zero);
     }
@@ -490,9 +513,14 @@ internal sealed class WindowManager : IDisposable
             ?? throw new InvalidOperationException("No displays are connected.");
     }
 
-    private bool IsTileable(IntPtr hwnd)
+    /// <summary>
+    /// Whether a window should be tiled. When <paramref name="requireVisible"/>
+    /// is false, hidden windows pass too; the caller must then place them
+    /// on a remembered workspace only.
+    /// </summary>
+    private bool IsTileable(IntPtr hwnd, bool requireVisible)
     {
-        if (!Win32.IsWindow(hwnd) || !Win32.IsWindowVisible(hwnd))
+        if (!Win32.IsWindow(hwnd) || (requireVisible && !Win32.IsWindowVisible(hwnd)))
             return false;
 
         Win32.GetWindowThreadProcessId(hwnd, out var processId);

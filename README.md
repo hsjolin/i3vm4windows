@@ -61,6 +61,10 @@ identity is placed back on its remembered workspace (hidden if that workspace
 is not active); unknown windows join the active workspace as usual. Up to 300
 placements are kept. State is saved whenever it changes and on exit.
 
+Hidden windows never linger: on exit every managed window is shown again, and
+windows that a crashed instance left hidden are re-adopted (shown on their
+remembered workspace) on the next start.
+
 ## Building
 
 Requires the .NET 10 SDK on Windows:

@@ -51,6 +51,18 @@ public sealed class AppStateTests
     }
 
     [Fact]
+    public void ResolveWorkspaceExact_RequiresTitleMatch()
+    {
+        var state = new AppState
+        {
+            Windows = new() { new WindowState(@"C:\app\app.exe", "Report", 4) },
+        };
+
+        Assert.Equal(4, state.ResolveWorkspaceExact(@"C:\app\app.exe", "Report"));
+        Assert.Null(state.ResolveWorkspaceExact(@"C:\app\app.exe", "Other"));
+    }
+
+    [Fact]
     public void MergeRemembered_KeepsPlacementsNotSeenAgain()
     {
         var previous = new AppState

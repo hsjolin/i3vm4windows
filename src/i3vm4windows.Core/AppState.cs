@@ -26,10 +26,9 @@ public sealed class AppState
     /// </summary>
     public int? ResolveWorkspace(string exePath, string title)
     {
-        var identity = new WindowState(exePath, title, 0);
-        var exact = Windows.FirstOrDefault(w => w.Matches(identity));
+        var exact = ResolveWorkspaceExact(exePath, title);
         if (exact is not null)
-            return exact.Workspace;
+            return exact;
 
         if (!string.IsNullOrEmpty(exePath))
         {
@@ -41,6 +40,13 @@ public sealed class AppState
 
         return null;
     }
+
+    /// <summary>
+    /// Requires an exact image-and-title match, without the process-image
+    /// fallback. Used to adopt windows that a previous instance left hidden.
+    /// </summary>
+    public int? ResolveWorkspaceExact(string exePath, string title) =>
+        Windows.FirstOrDefault(w => w.Matches(new WindowState(exePath, title, 0)))?.Workspace;
 
     /// <summary>
     /// Keeps placements from a previous state that were not seen again, so
