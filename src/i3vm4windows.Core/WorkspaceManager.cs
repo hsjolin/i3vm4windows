@@ -26,6 +26,9 @@ public sealed class WorkspaceManager
 {
     private readonly Dictionary<int, Workspace> _workspaces = new();
     private readonly Dictionary<string, int> _activeByOutput = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>The workspace that was active on an output before the
+    /// current one, for i3's workspace back_and_forth.</summary>
+    private readonly Dictionary<string, int> _previousByOutput = new(StringComparer.OrdinalIgnoreCase);
     private readonly TilingEngine _engine = new();
 
     /// <summary>All known workspaces.</summary>
@@ -111,10 +114,29 @@ public sealed class WorkspaceManager
         var output = TryGet(index)?.OutputName ?? focusedOutput;
         var previous = ActiveOn(output).Index;
         if (previous != index)
+        {
+            _previousByOutput[output] = previous;
             _activeByOutput[output] = index;
+        }
 
         GetOrCreate(index, output);
         return new SwitchResult(new[] { new OutputSwitch(output, previous, index) });
+    }
+
+    /// <summary>
+    /// Switches the output's active workspace back to the one that was
+    /// active before the current one, like i3's workspace
+    /// back_and_forth; with no previous workspace it is a no-op reported
+    /// unchanged.
+    /// </summary>
+    public SwitchResult SwitchToBackAndForth(string focusedOutput)
+    {
+        var output = ActiveOn(focusedOutput).OutputName;
+        var current = ActiveOn(output).Index;
+        if (_previousByOutput.TryGetValue(output, out var previous) && previous != current)
+            return SwitchTo(previous, focusedOutput);
+
+        return new SwitchResult(new[] { new OutputSwitch(output, current, current) });
     }
 
     /// <summary>
@@ -229,6 +251,14 @@ public sealed class WorkspaceManager
     /// </summary>
     public void ToggleOrientation(string outputName) =>
         _engine.ToggleOrientation(ActiveOn(outputName));
+
+    /// <summary>
+    /// Switches the split containing the focused window of the output's
+    /// active workspace to the given mode, like i3's layout command: tabs
+    /// show one window at a time, focus switching between them.
+    /// </summary>
+    public void SetLayoutMode(string outputName, LayoutMode mode) =>
+        _engine.SetLayoutMode(ActiveOn(outputName), mode);
 
     /// <summary>Computes the layout of the output's active workspace.</summary>
     public IReadOnlyList<AssignedRect> ComputeActiveLayout(

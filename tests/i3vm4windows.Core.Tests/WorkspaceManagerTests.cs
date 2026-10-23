@@ -289,4 +289,85 @@ public sealed class WorkspaceManagerTests
 
         Assert.Equal(new[] { 100L, 300L, 200L }, manager.TryGet(1)?.WindowHandles);
     }
+
+    [Fact]
+    public void SwitchTo_RemembersThePreviousWorkspaceForBackAndForth()
+    {
+        var manager = new WorkspaceManager();
+        manager.SwitchTo(2, "a");
+        manager.SwitchTo(3, "a");
+
+        var result = manager.SwitchToBackAndForth("a");
+
+        var change = Assert.Single(result.Changes);
+        Assert.True(change.Changed);
+        Assert.Equal(2, manager.GetActiveIndex("a"));
+    }
+
+    [Fact]
+    public void SwitchToBackAndForth_WithoutAPreviousWorkspace_IsANoOp()
+    {
+        var manager = new WorkspaceManager();
+
+        var result = manager.SwitchToBackAndForth("a");
+
+        var change = Assert.Single(result.Changes);
+        Assert.False(change.Changed);
+        Assert.Equal(1, manager.GetActiveIndex("a"));
+    }
+
+    [Fact]
+    public void SwitchToBackAndForth_Twice_ReturnsToTheWorkspaceBeforeIt()
+    {
+        var manager = new WorkspaceManager();
+        manager.SwitchTo(2, "a");
+        manager.SwitchTo(3, "a");
+        manager.SwitchToBackAndForth("a");
+
+        manager.SwitchToBackAndForth("a");
+
+        Assert.Equal(3, manager.GetActiveIndex("a"));
+    }
+
+    [Fact]
+    public void SetLayoutMode_Tabbed_FocusedWindowCoversTheWholeArea()
+    {
+        var manager = new WorkspaceManager();
+        manager.AddWindow(100, "a");
+        manager.AddWindow(200, "a");
+        manager.AddWindow(300, "a");
+
+        manager.SetLayoutMode("a", LayoutMode.Tabbed);
+
+        var assigned = Assert.Single(manager.ComputeActiveLayout("a", Monitor, NoGaps()));
+        Assert.Equal(300, assigned.WindowHandle);
+        Assert.Equal(new Rect(0, 0, 1920, 1080), assigned.Rect);
+    }
+
+    [Fact]
+    public void SetLayoutMode_Tabbed_FocusSwitchChangesTheVisibleTab()
+    {
+        var manager = new WorkspaceManager();
+        manager.AddWindow(100, "a");
+        manager.AddWindow(200, "a");
+
+        manager.SetLayoutMode("a", LayoutMode.Tabbed);
+        manager.FocusRelative("a", 1);
+
+        var assigned = Assert.Single(manager.ComputeActiveLayout("a", Monitor, NoGaps()));
+        Assert.Equal(100, assigned.WindowHandle);
+    }
+
+    [Fact]
+    public void SetLayoutMode_Split_TabbedContainerTilesAgain()
+    {
+        var manager = new WorkspaceManager();
+        manager.AddWindow(100, "a");
+        manager.AddWindow(200, "a");
+
+        manager.SetLayoutMode("a", LayoutMode.Tabbed);
+        manager.SetLayoutMode("a", LayoutMode.Split);
+
+        Assert.Equal(2, manager.ComputeActiveLayout("a", Monitor, NoGaps()).Count);
+    }
 }

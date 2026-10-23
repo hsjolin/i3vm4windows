@@ -9,6 +9,17 @@ public enum SplitOrientation
     Vertical,
 }
 
+/// <summary>How a split container presents its children.</summary>
+public enum LayoutMode
+{
+    /// <summary>Children share the area along the split axis.</summary>
+    Split,
+
+    /// <summary>One child shows at a time, covering the whole area; the
+    /// focused window picks which, like i3's tabbed layout.</summary>
+    Tabbed,
+}
+
 /// <summary>A node in the layout tree, mirroring i3's container model.</summary>
 public abstract class LayoutNode
 {
@@ -39,6 +50,8 @@ public sealed class WindowNode : LayoutNode
 public sealed class SplitNode : LayoutNode
 {
     public SplitOrientation Orientation { get; set; }
+
+    public LayoutMode Mode { get; set; } = LayoutMode.Split;
 
     public List<LayoutNode> Children { get; } = new();
 

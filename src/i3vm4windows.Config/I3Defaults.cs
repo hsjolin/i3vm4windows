@@ -18,6 +18,8 @@ public static class I3Defaults
 
         # Splitting, closing, rescanning and monitor moves.
         bindsym $mod+Enter split toggle
+        bindsym $mod+w layout tabbed
+        bindsym $mod+e layout default
         bindsym $mod+q kill
         bindsym $mod+y reload
         bindsym $mod+x move workspace to output next

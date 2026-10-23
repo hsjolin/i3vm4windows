@@ -5,10 +5,11 @@ namespace i3vm4windows.Config;
 /// <summary>
 /// Parses the key bindings of an i3 configuration file: comment lines,
 /// blank lines, backslash line continuations, <c>set $name value</c>
-/// variables and <c>bindsym keys command</c> directives. A subset of i3
-/// commands maps to the app's tiling actions; anything the app cannot
-/// perform produces a warning and is ignored, as are other i3 directives
-/// (font, bar, gaps, exec, ...) that have no meaning here.
+/// variables and <c>bindsym keys command</c> directives, for_window rules
+/// and exec autostart directives. A subset of i3 commands maps to the
+/// app's tiling actions; anything the app cannot perform produces a
+/// warning and is ignored, as are other i3 directives (font, bar, gaps,
+/// ...) that have no meaning here.
 /// </summary>
 public static class I3ConfigParser
 {
@@ -20,9 +21,12 @@ public static class I3ConfigParser
         var warnings = new List<string>();
         var variables = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         // Later bindsym lines win over earlier ones for the same key
-        // combination, like i3 replaces bindings.
-        var bindings = new Dictionary<(Modifiers Modifiers, string Key), Binding>();
+        // combination, like i3 replaces bindings; the mode is part of the
+        // key so default and mode bindings coexist.
+        var bindings = new Dictionary<(string Mode, Modifiers Modifiers, string Key), Binding>();
         var rules = new List<WindowRule>();
+        var exec = new List<string>();
+        string? mode = null;
 
         foreach (var original in JoinContinuations(text))
         {
@@ -33,6 +37,32 @@ public static class I3ConfigParser
             var tokens = Tokenize(line);
             if (tokens.Length == 0)
                 continue;
+
+            // mode "name" { opens a binding mode block; } closes it. The
+            // block's bindsym lines belong to the mode until then.
+            if (tokens[0].Equals("mode", StringComparison.OrdinalIgnoreCase))
+            {
+                if (mode is not null)
+                {
+                    warnings.Add($"Nested mode block: {line}");
+                    continue;
+                }
+
+                if (tokens.Length == 3 && tokens[2] == "{")
+                {
+                    mode = tokens[1].Trim('"');
+                    continue;
+                }
+
+                warnings.Add($"Unsupported mode directive: {line}");
+                continue;
+            }
+
+            if (mode is not null && tokens[0] == "}")
+            {
+                mode = null;
+                continue;
+            }
 
             // set stores its value verbatim; variables are substituted where
             // they are used, not on the set line itself.
@@ -59,11 +89,15 @@ public static class I3ConfigParser
             switch (tokens[0].ToLowerInvariant())
             {
                 case "bindsym":
-                    ParseBindsym(tokens, bindings, warnings, line);
+                    ParseBindsym(tokens, bindings, warnings, line, mode);
                     break;
 
                 case "for_window":
                     ParseForWindow(tokens, rules, warnings, line);
+                    break;
+
+                case "exec":
+                    ParseExec(tokens, exec, warnings, line);
                     break;
 
                 default:
@@ -73,15 +107,40 @@ public static class I3ConfigParser
             }
         }
 
-        return new I3Config(bindings.Values.ToList(), warnings, rules);
+        return new I3Config(bindings.Values.ToList(), warnings, rules, exec);
+    }
+
+    /// <summary>
+    /// Parses an exec directive, i3's autostart: the program starts when
+    /// the app starts with this configuration. The command keeps its
+    /// original case and quoting, like the exec commands of bindings.
+    /// </summary>
+    private static void ParseExec(
+        string[] tokens, List<string> exec, List<string> warnings, string line)
+    {
+        var rest = tokens[1..];
+        if (rest.Length > 0 &&
+            rest[0].Equals("--no-startup-id", StringComparison.OrdinalIgnoreCase))
+        {
+            rest = rest[1..];
+        }
+
+        if (rest.Length == 0)
+        {
+            warnings.Add($"exec without a program: {line}");
+            return;
+        }
+
+        exec.Add(string.Join(' ', rest));
     }
 
     /// <summary>
     /// Parses a for_window directive, e.g.
     /// for_window [class="Chrome_WidgetWin_1" title="^Vivaldi$"] floating enable.
     /// The criteria match a window's class and title against regular
-    /// expressions like i3 does; floating enable is the only supported
-    /// command.
+    /// expressions like i3 does; floating enable leaves matching windows
+    /// alone and move container to workspace makes them join that
+    /// workspace when they appear.
     /// </summary>
     private static void ParseForWindow(
         string[] tokens,
@@ -111,6 +170,24 @@ public static class I3ConfigParser
             case ["floating", "enable"]:
                 rules.Add(rule!);
                 break;
+
+            case ["move", "container", "to", "workspace", ..]:
+            case ["move", "to", "workspace", ..]:
+                // Workspace names may span several tokens, e.g. "3: web".
+                var nameIndex = command[1] == "container" ? 4 : 3;
+                if (!TryParseWorkspace(string.Join(' ', command[nameIndex..]), out var workspace))
+                {
+                    warnings.Add($"Unsupported workspace in for_window: {line}");
+                    break;
+                }
+
+                rules.Add(rule! with
+                {
+                    Action = WindowRuleAction.MoveToWorkspace,
+                    Parameter = workspace,
+                });
+                break;
+
             default:
                 warnings.Add($"Unsupported for_window command: {line}");
                 break;
@@ -182,9 +259,10 @@ public static class I3ConfigParser
 
     private static void ParseBindsym(
         string[] tokens,
-        Dictionary<(Modifiers Modifiers, string Key), Binding> bindings,
+        Dictionary<(string Mode, Modifiers Modifiers, string Key), Binding> bindings,
         List<string> warnings,
-        string line)
+        string line,
+        string? mode)
     {
         if (tokens.Length > 1 && tokens[1].Equals("--release", StringComparison.OrdinalIgnoreCase))
         {
@@ -229,8 +307,10 @@ public static class I3ConfigParser
         }
 
         // The hook dispatches combinations through its ownership of the Win
-        // key, so a binding without Win has no reliable meaning here.
-        if (!modifiers.HasFlag(Modifiers.Win))
+        // key, so a default-mode binding without Win has no reliable meaning
+        // here; mode bindings dispatch through the hook's mode matching
+        // instead.
+        if (mode is null && !modifiers.HasFlag(Modifiers.Win))
         {
             warnings.Add($"Binding must include the Win key (Mod4): {line}");
             return;
@@ -250,7 +330,8 @@ public static class I3ConfigParser
             return;
         }
 
-        bindings[(modifiers, key)] = new Binding(modifiers, key, action, parameter, commandText, rule);
+        bindings[(mode ?? "default", modifiers, key)] =
+            new Binding(modifiers, key, action, parameter, commandText, rule, mode ?? "default");
     }
 
     /// <summary>
@@ -360,11 +441,37 @@ public static class I3ConfigParser
             case ["layout", "toggle", "split"]:
                 action = ConfigAction.ToggleOrientation;
                 return true;
+            case ["layout", "tabbed"]:
+                action = ConfigAction.SetTabbed;
+                return true;
+            case ["layout", "default"]:
+                action = ConfigAction.SetSplit;
+                return true;
             case ["floating", "toggle"]:
                 action = ConfigAction.FloatingToggle;
                 return true;
             case ["scratchpad", "show"]:
                 action = ConfigAction.ScratchpadShow;
+                return true;
+            case ["workspace", "back_and_forth"]:
+                action = ConfigAction.SwitchBackAndForth;
+                return true;
+            case ["mode", var name]:
+                action = ConfigAction.Mode;
+                commandText = name.Trim('"');
+                return true;
+            case ["resize", "grow", "width", ..]:
+            case ["resize", "shrink", "width", ..]:
+            case ["resize", "grow", "height", ..]:
+            case ["resize", "shrink", "height", ..]:
+                // The pixel amount drives the resize; ppt (percentage
+                // points) has no meaning here.
+                if (command.Length < 4 || !int.TryParse(command[3], out parameter))
+                    return false;
+
+                action = command[1] == "grow"
+                    ? command[2] == "width" ? ConfigAction.ResizeGrowWidth : ConfigAction.ResizeGrowHeight
+                    : command[2] == "width" ? ConfigAction.ResizeShrinkWidth : ConfigAction.ResizeShrinkHeight;
                 return true;
             case ["reload"]:
                 action = ConfigAction.Refresh;

@@ -258,7 +258,7 @@ public class I3ConfigParserTests
         var config = I3ConfigParser.Parse(I3Defaults.Text);
 
         Assert.Empty(config.Warnings);
-        Assert.Equal(27, config.Bindings.Count);
+        Assert.Equal(29, config.Bindings.Count);
 
         var switchWorkspace = config.Bindings.Where(b => b.Action == ConfigAction.SwitchWorkspace);
         Assert.Equal(9, switchWorkspace.Count());
@@ -275,6 +275,12 @@ public class I3ConfigParserTests
             b.Modifiers == Modifiers.Win && b.Key == "Enter");
         Assert.Contains(config.Bindings, b =>
             b.Modifiers == Modifiers.Win && b.Key == "Q");
+        Assert.Contains(config.Bindings, b =>
+            b.Modifiers == Modifiers.Win && b.Key == "W" &&
+            b.Action == ConfigAction.SetTabbed);
+        Assert.Contains(config.Bindings, b =>
+            b.Modifiers == Modifiers.Win && b.Key == "E" &&
+            b.Action == ConfigAction.SetSplit);
     }
 
     [Fact]
@@ -348,5 +354,204 @@ public class I3ConfigParserTests
 
         Assert.Empty(config.Rules);
         Assert.Equal(4, config.Warnings.Count);
+    }
+
+    [Fact]
+    public void For_window_move_container_to_workspace_creates_a_move_rule()
+    {
+        var config = I3ConfigParser.Parse("""
+            for_window [title="Vivaldi$"] move container to workspace 3
+            """);
+
+        var rule = Assert.Single(config.Rules);
+        Assert.Equal(WindowRuleAction.MoveToWorkspace, rule.Action);
+        Assert.Equal(3, rule.Parameter);
+        Assert.Null(rule.Class);
+        Assert.True(rule.Matches("any", "Something - Vivaldi"));
+        Assert.False(rule.Matches("any", "Vivaldi - Something else"));
+    }
+
+    [Fact]
+    public void For_window_move_to_workspace_accepts_numbered_names()
+    {
+        var config = I3ConfigParser.Parse("""
+            for_window [class="Term"] move to workspace 3: web
+            """);
+
+        var rule = Assert.Single(config.Rules);
+        Assert.Equal(WindowRuleAction.MoveToWorkspace, rule.Action);
+        Assert.Equal(3, rule.Parameter);
+    }
+
+    [Fact]
+    public void For_window_move_to_unknown_workspace_warns()
+    {
+        var config = I3ConfigParser.Parse("""
+            for_window [class="Term"] move container to workspace web
+            """);
+
+        Assert.Empty(config.Rules);
+        Assert.Single(config.Warnings);
+    }
+
+    [Fact]
+    public void Exec_directive_collects_the_startup_command()
+    {
+        var config = I3ConfigParser.Parse("""
+            exec --no-startup-id "%USERPROFILE%\copyq\copyq.exe"
+            """);
+
+        var command = Assert.Single(config.Exec);
+        Assert.Equal("\"%USERPROFILE%\\copyq\\copyq.exe\"", command);
+        Assert.Empty(config.Warnings);
+    }
+
+    [Fact]
+    public void Exec_directive_keeps_arguments_and_case()
+    {
+        var config = I3ConfigParser.Parse("""
+            exec C:\Tools\MyTool.exe Start Something
+            """);
+
+        var command = Assert.Single(config.Exec);
+        Assert.Equal("C:\\Tools\\MyTool.exe Start Something", command);
+    }
+
+    [Fact]
+    public void Exec_directive_without_a_program_warns()
+    {
+        var config = I3ConfigParser.Parse("""
+            exec --no-startup-id
+            """);
+
+        Assert.Empty(config.Exec);
+        Assert.Single(config.Warnings);
+    }
+
+    [Fact]
+    public void Exec_commands_in_bindings_do_not_autostart()
+    {
+        var config = I3ConfigParser.Parse("""
+            bindsym Mod4+c exec --no-startup-id "%USERPROFILE%\copyq\copyq.exe" toggle
+            """);
+
+        Assert.Empty(config.Exec);
+        var binding = Assert.Single(config.Bindings);
+        Assert.Equal(ConfigAction.Launch, binding.Action);
+    }
+
+    [Fact]
+    public void Mode_block_binds_without_the_win_key()
+    {
+        var config = I3ConfigParser.Parse("""
+            mode "resize" {
+              bindsym Left resize shrink width 10 px or 10 ppt
+              bindsym Right resize grow width 10 px or 10 ppt
+              bindsym Return mode "default"
+              bindsym Escape mode "default"
+            }
+            bindsym Mod4+r mode "resize"
+            """);
+
+        Assert.Empty(config.Warnings);
+        Assert.Equal(5, config.Bindings.Count);
+
+        var enter = config.Bindings.Single(b => b.Key == "R");
+        Assert.Equal("default", enter.Mode);
+        Assert.Equal(ConfigAction.Mode, enter.Action);
+        Assert.Equal("resize", enter.Command);
+
+        var shrink = config.Bindings.Single(b => b.Mode == "resize" && b.Key == "Left");
+        Assert.Equal(Modifiers.None, shrink.Modifiers);
+        Assert.Equal(ConfigAction.ResizeShrinkWidth, shrink.Action);
+        Assert.Equal(10, shrink.Parameter);
+
+        var leave = config.Bindings.Single(b => b.Mode == "resize" && b.Key == "Enter");
+        Assert.Equal(ConfigAction.Mode, leave.Action);
+        Assert.Equal("default", leave.Command);
+    }
+
+    [Fact]
+    public void Resize_height_commands_map_to_grow_and_shrink()
+    {
+        var config = I3ConfigParser.Parse("""
+            mode "resize" {
+              bindsym Up resize shrink height 10 px or 10 ppt
+              bindsym Down resize grow height 10 px or 10 ppt
+            }
+            """);
+
+        var up = config.Bindings.Single(b => b.Key == "Up");
+        Assert.Equal(ConfigAction.ResizeShrinkHeight, up.Action);
+        var down = config.Bindings.Single(b => b.Key == "Down");
+        Assert.Equal(ConfigAction.ResizeGrowHeight, down.Action);
+    }
+
+    [Fact]
+    public void Workspace_back_and_forth_maps_to_the_action()
+    {
+        var config = I3ConfigParser.Parse("""
+            bindsym Mod4+Escape workspace back_and_forth
+            """);
+
+        var binding = Assert.Single(config.Bindings);
+        Assert.Equal(ConfigAction.SwitchBackAndForth, binding.Action);
+    }
+
+    [Fact]
+    public void Bindings_without_win_warn_outside_mode_blocks()
+    {
+        var config = I3ConfigParser.Parse("""
+            bindsym Left focus left
+            """);
+
+        Assert.Empty(config.Bindings);
+        Assert.Single(config.Warnings);
+    }
+
+    [Fact]
+    public void Win_key_directives_are_ignored_with_a_warning()
+    {
+        var config = I3ConfigParser.Parse("""
+            win_key passthrough
+            remap_win_key LCtrl
+            """);
+
+        Assert.Empty(config.Warnings);
+    }
+
+    [Fact]
+    public void Layout_tabbed_maps_to_SetTabbed()
+    {
+        var config = I3ConfigParser.Parse("""
+            bindsym Mod4+w layout tabbed
+            """);
+
+        var binding = Assert.Single(config.Bindings);
+        Assert.Equal(ConfigAction.SetTabbed, binding.Action);
+        Assert.Empty(config.Warnings);
+    }
+
+    [Fact]
+    public void Layout_default_maps_to_SetSplit()
+    {
+        var config = I3ConfigParser.Parse("""
+            bindsym Mod4+e layout default
+            """);
+
+        var binding = Assert.Single(config.Bindings);
+        Assert.Equal(ConfigAction.SetSplit, binding.Action);
+        Assert.Empty(config.Warnings);
+    }
+
+    [Fact]
+    public void Layout_stacking_is_not_supported()
+    {
+        var config = I3ConfigParser.Parse("""
+            bindsym Mod4+s layout stacking
+            """);
+
+        Assert.Empty(config.Bindings);
+        Assert.Single(config.Warnings);
     }
 }

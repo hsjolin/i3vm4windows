@@ -38,6 +38,27 @@ public sealed class TilingEngineTests
             var handle = Assert.Single(workspace.WindowHandles);
             Assert.Equal(100, handle);
         }
+
+        [Fact]
+        public void ThirdWindow_AfterResize_TakesAnEqualShareOfTheSplit()
+        {
+            var (workspace, engine) = Create(100, 200);
+            var options = NoGaps();
+
+            // A resize turns the weights into pixel units.
+            engine.ComputeLayout(workspace, Monitor, options);
+            Assert.True(engine.ApplyUserResize(workspace, 100, ResizeAxis.Width, 600));
+
+            engine.AddWindow(workspace, 300);
+            var layout = engine.ComputeLayout(workspace, Monitor, options);
+
+            Assert.Equal(3, layout.Count);
+            // The newcomer takes a third of the area; the resized pair
+            // shrinks proportionally, keeping its ratio.
+            Assert.Equal(640, layout.Single(a => a.WindowHandle == 300).Rect.Width);
+            Assert.Equal(400, layout.Single(a => a.WindowHandle == 100).Rect.Width);
+            Assert.Equal(880, layout.Single(a => a.WindowHandle == 200).Rect.Width);
+        }
     }
 
     public sealed class ComputeLayoutTests
@@ -327,6 +348,62 @@ public sealed class TilingEngineTests
             engine.ComputeLayout(workspace, Monitor, NoGaps());
 
             Assert.False(engine.ApplyUserResize(workspace, 999, ResizeAxis.Width, 600));
+        }
+    }
+
+    public sealed class TabbedLayoutTests
+    {
+        [Fact]
+        public void TabbedContainer_ShowsOnlyTheFocusedWindow()
+        {
+            var (workspace, engine) = Create(100, 200);
+            engine.SetLayoutMode(workspace, LayoutMode.Tabbed);
+            workspace.FocusedWindowHandle = 200;
+
+            var layout = engine.ComputeLayout(workspace, Monitor, NoGaps());
+
+            var assignment = Assert.Single(layout);
+            Assert.Equal(200, assignment.WindowHandle);
+            Assert.Equal(Monitor, assignment.Rect);
+        }
+
+        [Fact]
+        public void SwitchingFocus_SwitchesTheVisibleTab()
+        {
+            var (workspace, engine) = Create(100, 200);
+            engine.SetLayoutMode(workspace, LayoutMode.Tabbed);
+            workspace.FocusedWindowHandle = 100;
+
+            var first = engine.ComputeLayout(workspace, Monitor, NoGaps());
+            workspace.FocusedWindowHandle = 200;
+            var second = engine.ComputeLayout(workspace, Monitor, NoGaps());
+
+            Assert.Equal(100, Assert.Single(first).WindowHandle);
+            Assert.Equal(200, Assert.Single(second).WindowHandle);
+        }
+
+        [Fact]
+        public void WithoutFocus_TheFirstChildShows()
+        {
+            var (workspace, engine) = Create(100, 200);
+            engine.SetLayoutMode(workspace, LayoutMode.Tabbed);
+            workspace.FocusedWindowHandle = null;
+
+            var layout = engine.ComputeLayout(workspace, Monitor, NoGaps());
+
+            Assert.Equal(100, Assert.Single(layout).WindowHandle);
+        }
+
+        [Fact]
+        public void ToggleOrientation_LeavesTabbedMode()
+        {
+            var (workspace, engine) = Create(100, 200);
+            engine.SetLayoutMode(workspace, LayoutMode.Tabbed);
+
+            engine.ToggleOrientation(workspace);
+            var layout = engine.ComputeLayout(workspace, Monitor, NoGaps());
+
+            Assert.Equal(2, layout.Count);
         }
     }
 }

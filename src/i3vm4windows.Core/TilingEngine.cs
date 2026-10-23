@@ -36,6 +36,13 @@ public sealed class TilingEngine
         var parent = focused?.Parent ?? workspace.Root;
         var index = focused is null ? parent.Children.Count : parent.Children.IndexOf(focused) + 1;
 
+        // Weights turn into pixel units as soon as a resize sets them, so a
+        // new window must not start at 1: the siblings' average gives it
+        // exactly an (n+1)-th of the split while they keep their ratios.
+        node.Weight = parent.Children.Count == 0
+            ? 1
+            : parent.Children.Sum(child => Math.Max(child.Weight, MinWeight)) / parent.Children.Count;
+
         parent.Children.Insert(index, node);
         node.Parent = parent;
         workspace.FocusedWindowHandle = windowHandle;
@@ -89,8 +96,18 @@ public sealed class TilingEngine
             return result;
         }
 
-        ComputeSplit(workspace.Root, usable, options, result);
+        ComputeSplit(workspace.Root, usable, options, result, workspace.FocusedWindowHandle);
         return result;
+    }
+
+    /// <summary>
+    /// Switches the split containing the focused window (the root when
+    /// nothing is focused) to the given mode, like i3's layout command.
+    /// </summary>
+    public void SetLayoutMode(Workspace workspace, LayoutMode mode)
+    {
+        var parent = Find(workspace.Root, workspace.FocusedWindowHandle ?? -1)?.Parent ?? workspace.Root;
+        parent.Mode = mode;
     }
 
     /// <summary>
@@ -142,6 +159,13 @@ public sealed class TilingEngine
     public void ToggleOrientation(Workspace workspace)
     {
         var parent = Find(workspace.Root, workspace.FocusedWindowHandle ?? -1)?.Parent ?? workspace.Root;
+        if (parent.Mode == LayoutMode.Tabbed)
+        {
+            // i3's "layout toggle split" returns a tabbed container to splits.
+            parent.Mode = LayoutMode.Split;
+            return;
+        }
+
         parent.Orientation = parent.Orientation == SplitOrientation.Horizontal
             ? SplitOrientation.Vertical
             : SplitOrientation.Horizontal;
@@ -182,10 +206,27 @@ public sealed class TilingEngine
     }
 
     private static void ComputeSplit(
-        SplitNode node, Rect rect, LayoutOptions options, List<AssignedRect> result)
+        SplitNode node, Rect rect, LayoutOptions options, List<AssignedRect> result, long? focused)
     {
         if (node.Children.Count == 0)
             return;
+
+        if (node.Mode == LayoutMode.Tabbed)
+        {
+            // Only the child containing the focused window shows, covering
+            // the whole area; the window manager hides the other members.
+            switch (ActiveChild(node, focused))
+            {
+                case WindowNode window:
+                    result.Add(new AssignedRect(window.WindowHandle, rect));
+                    break;
+                case SplitNode split:
+                    ComputeSplit(split, rect, options, result, focused);
+                    break;
+            }
+
+            return;
+        }
 
         var horizontal = node.Orientation == SplitOrientation.Horizontal;
         var span = (horizontal ? rect.Width : rect.Height) - options.InnerGap * (node.Children.Count - 1);
@@ -225,13 +266,28 @@ public sealed class TilingEngine
                     result.Add(new AssignedRect(window.WindowHandle, slice));
                     break;
                 case SplitNode split:
-                    ComputeSplit(split, slice, options, result);
+                    ComputeSplit(split, slice, options, result, focused);
                     break;
             }
 
             position += size + options.InnerGap;
         }
     }
+
+    /// <summary>
+    /// The child that shows in a tabbed container: the one holding the
+    /// focused window, else the first child.
+    /// </summary>
+    private static LayoutNode ActiveChild(SplitNode node, long? focused) =>
+        node.Children.FirstOrDefault(child => ContainsWindow(child, focused)) ?? node.Children[0];
+
+    private static bool ContainsWindow(LayoutNode node, long? focused) =>
+        focused is { } handle && node switch
+        {
+            WindowNode window => window.WindowHandle == handle,
+            SplitNode split => split.Windows().Any(w => w.WindowHandle == handle),
+            _ => false,
+        };
 
     private static WindowNode? Find(LayoutNode node, long windowHandle) => node switch
     {
