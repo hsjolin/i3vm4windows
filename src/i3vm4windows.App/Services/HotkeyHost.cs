@@ -22,6 +22,9 @@ internal sealed class HotkeyHost : IDisposable
     private readonly object _lock = new();
     private readonly List<(int Id, Win32.Modifiers Modifiers, uint VirtualKey)> _registrations = new();
     private readonly List<(int Id, Win32.Modifiers Modifiers, uint VirtualKey)> _hooked = new();
+    /// <summary>The bindings of the active i3 mode, dispatched by the hook
+    /// while the mode is active.</summary>
+    private readonly List<(int Id, Win32.Modifiers Modifiers, uint VirtualKey)> _modeBindings = new();
     private HwndSource? _source;
     private Dispatcher? _dispatcher;
     private Action<int>? _onHotkey;
@@ -31,7 +34,9 @@ internal sealed class HotkeyHost : IDisposable
     // Used only on the hook thread.
     private Win32.LowLevelKeyboardProc? _hookProc;
     private IntPtr _llHook;
-    private bool _winKeyDown;
+    // Written on the keyboard hook thread, read by the mouse dragger's
+    // hook thread: volatile, or a weak memory model can read it stale.
+    private volatile bool _winKeyDown;
     private bool _shiftKeyDown;
     private bool _controlKeyDown;
     private bool _altKeyDown;
@@ -66,6 +71,11 @@ internal sealed class HotkeyHost : IDisposable
         EnsureHook();
     }
 
+    /// <summary>Whether the physical Win key is currently held, as the hook
+    /// tracks it — the mouse dragger asks, since only this app sees the
+    /// key at all.</summary>
+    public bool WinKeyDown => _winKeyDown;
+
     /// <summary>
     /// Registers a hotkey, falling back to the low-level keyboard hook when
     /// another process already owns the combination.
@@ -85,6 +95,21 @@ internal sealed class HotkeyHost : IDisposable
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Activates the bindings of an i3 binding mode: while the list is not
+    /// empty, matched keys dispatch with or without the Win key and shadow
+    /// the default bindings. An empty list returns to the default mode.
+    /// </summary>
+    public void SetModeBindings(IReadOnlyList<(int Id, Win32.Modifiers Modifiers, Key Key)> bindings)
+    {
+        lock (_lock)
+        {
+            _modeBindings.Clear();
+            foreach (var (id, modifiers, key) in bindings)
+                _modeBindings.Add((id, modifiers, (uint)KeyInterop.VirtualKeyFromKey(key)));
+        }
     }
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -193,6 +218,24 @@ internal sealed class HotkeyHost : IDisposable
                 return Win32.CallNextHookEx(_llHook, nCode, wParam, lParam);
             }
 
+            if (ModeActive())
+            {
+                // A binding mode (i3's mode command) owns its keys while it
+                // is active: matched keys dispatch and are consumed, and
+                // unmatched ones still reach the focused window unless the
+                // Win key is held.
+                if (keyDown && MatchMode(data.vkCode) is { } modeId)
+                {
+                    _dispatcher?.BeginInvoke(() => _onHotkey?.Invoke(modeId));
+                    return new IntPtr(1);
+                }
+
+                if (_winKeyDown)
+                    return new IntPtr(1);
+
+                return Win32.CallNextHookEx(_llHook, nCode, wParam, lParam);
+            }
+
             if (_winKeyDown)
             {
                 // Every key pressed while Win is held belongs to the app:
@@ -206,6 +249,31 @@ internal sealed class HotkeyHost : IDisposable
         }
 
         return Win32.CallNextHookEx(_llHook, nCode, wParam, lParam);
+    }
+
+    private bool ModeActive()
+    {
+        lock (_lock)
+            return _modeBindings.Count > 0;
+    }
+
+    /// <summary>
+    /// Finds the mode binding whose modifiers are exactly the ones held,
+    /// with or without the Win key.
+    /// </summary>
+    private int? MatchMode(uint virtualKey)
+    {
+        var held = HeldModifiers();
+        lock (_lock)
+        {
+            foreach (var (id, modifiers, vk) in _modeBindings)
+            {
+                if (vk == virtualKey && held == modifiers)
+                    return id;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>Finds the combination whose modifiers are exactly the ones
@@ -285,19 +353,31 @@ internal sealed class HotkeyHost : IDisposable
         return modifiers;
     }
 
+    /// <summary>
+    /// Drops every registration, as a configuration reload needs: the Win32
+    /// hotkeys are unregistered and the hook matches nothing until the
+    /// caller registers the new set.
+    /// </summary>
+    public void UnregisterAll()
+    {
+        if (_source is null)
+            return;
+
+        lock (_lock)
+        {
+            foreach (var (id, _, _) in _registrations)
+                Win32.UnregisterHotKey(_source.Handle, id);
+            _registrations.Clear();
+            _hooked.Clear();
+        }
+    }
+
     public void Dispose()
     {
         if (_source is null)
             return;
 
-        foreach (var (id, _, _) in _registrations)
-            Win32.UnregisterHotKey(_source.Handle, id);
-        _registrations.Clear();
-
-        lock (_lock)
-        {
-            _hooked.Clear();
-        }
+        UnregisterAll();
 
         StopHookThread();
 

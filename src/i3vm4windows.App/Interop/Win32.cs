@@ -52,6 +52,59 @@ internal static class Win32
     public delegate bool MonitorEnumProc(IntPtr monitor, IntPtr hdc, IntPtr clipRect, IntPtr lParam);
 
     public delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+    public delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr WindowFromPoint(POINT point);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+
+    public const uint GA_ROOT = 2;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MSLLHOOKSTRUCT
+    {
+        public POINT pt;
+        public uint mouseData;
+        public uint flags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
+    public const uint WM_MOUSEMOVE = 0x0200;
+    public const uint WM_LBUTTONDOWN = 0x0201;
+    public const uint WM_LBUTTONUP = 0x0202;
+    public const uint WM_RBUTTONDOWN = 0x0204;
+    public const uint WM_RBUTTONUP = 0x0205;
+    public const uint LLKHF_INJECTED = 0x10;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MOUSEINPUT
+    {
+        public int dx;
+        public int dy;
+        public uint mouseData;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct INPUT
+    {
+        public uint type;
+        public MOUSEINPUT mi;
+    }
+
+    public const uint INPUT_MOUSE = 0;
+    public const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
+    public const uint MOUSEEVENTF_LEFTUP = 0x0004;
+    public const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
+    public const uint MOUSEEVENTF_RIGHTUP = 0x0010;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint SendInput(uint inputCount, INPUT[] inputs, int inputSize);
 
     [StructLayout(LayoutKind.Sequential)]
     public struct KBDLLHOOKSTRUCT
@@ -119,6 +172,9 @@ internal static class Win32
     public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
 
     [DllImport("user32.dll")]
+    public static extern bool SetCursorPos(int x, int y);
+
+    [DllImport("user32.dll")]
     public static extern bool SetWindowPos(
         IntPtr hwnd, IntPtr insertAfter, int x, int y, int cx, int cy, uint flags);
 
@@ -136,7 +192,7 @@ internal static class Win32
 
     [DllImport("user32.dll")]
     public static extern IntPtr SetWindowsHookEx(
-        int hookType, LowLevelKeyboardProc proc, IntPtr module, uint threadId);
+        int hookType, Delegate proc, IntPtr module, uint threadId);
 
     [DllImport("user32.dll")]
     public static extern bool UnhookWindowsHookEx(IntPtr hook);
@@ -163,6 +219,9 @@ internal static class Win32
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     public static extern nint GetWindowLongPtr(IntPtr hwnd, int index);
 
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetWindow(IntPtr hwnd, uint command);
+
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
     public static extern nint SetWindowLongPtr(IntPtr hwnd, int index, nint value);
 
@@ -185,6 +244,7 @@ internal static class Win32
 
     public const int GWL_EXSTYLE = -20;
     public const int GWL_STYLE = -16;
+    public const uint GW_OWNER = 4;
     public const int WS_EX_TOOLWINDOW = 0x00000080;
     public const long WS_EX_NOACTIVATE = 0x08000000;
     public const long WS_EX_TRANSPARENT = 0x00000020;
@@ -208,6 +268,7 @@ internal static class Win32
 
     // Low-level keyboard hook (fallback for hotkeys the shell already owns).
     public const int WH_KEYBOARD_LL = 13;
+    public const int WH_MOUSE_LL = 14;
     public const uint LLKHF_UP = 0x80;
     public const int WM_QUIT = 0x0012;
 

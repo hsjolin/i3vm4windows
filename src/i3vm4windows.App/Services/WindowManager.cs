@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Windows.Threading;
 using i3vm4windows.App.Interop;
@@ -39,12 +40,22 @@ internal sealed class WindowManager : IDisposable
     private readonly Dictionary<long, LayoutPlacement> _placements = new();
     private readonly LayoutOptions _options = new() { OuterMargin = 8, InnerGap = 8 };
     private readonly HashSet<long> _managedHandles = new();
+    /// <summary>
+    /// Windows the user released from the tiling with floating toggle:
+    /// discovery must not re-tile them on later rescans.
+    /// </summary>
+    private readonly HashSet<long> _floatedByUser = new();
     private readonly HashSet<long> _hiddenByUs = new();
-    private readonly WorkspaceNotifier _notifier = new();
+    /// <summary>
+    /// The workspace a scratchpad window was last shown on, by window
+    /// handle; toggle decisions compare it with the active workspace.
+    /// </summary>
+    private readonly Dictionary<long, (string Output, int Index)> _scratchpadHomes = new();
+    private readonly WorkspaceIndicator _indicator = new();
     private readonly DispatcherTimer _refreshTimer;
     private readonly uint _ownProcessId;
     private readonly Win32.WinEventDelegate _winEventDelegate;
-    private readonly IReadOnlyList<WindowRule> _rules;
+    private IReadOnlyList<WindowRule> _rules;
     private IntPtr _winEventHook;
     private bool _disposed;
 
@@ -90,7 +101,11 @@ internal sealed class WindowManager : IDisposable
         if (_disposed)
             return;
 
-        DebounceRefresh();
+        AppLog.Info("display settings changed; resyncing");
+
+        // SystemEvents may deliver the event on a thread that is not ours;
+        // the refresh touches dispatcher-affine state, so it runs on ours.
+        _refreshTimer.Dispatcher.BeginInvoke(DebounceRefresh);
     }
 
     /// <summary>Restarts the refresh timer so it fires once changes settle.</summary>
@@ -100,17 +115,56 @@ internal sealed class WindowManager : IDisposable
         _refreshTimer.Start();
     }
 
+    /// <summary>
+    /// Replaces the for_window rules after a configuration reload and
+    /// re-evaluates: rules decide which windows join the tiling, so the
+    /// ones already managed keep their state.
+    /// </summary>
+    public void UpdateRules(IReadOnlyList<WindowRule> rules)
+    {
+        _rules = rules;
+        RefreshWindows();
+    }
+
+    /// <summary>
+    /// Releases the window from the tiling for a mouse drag: a managed
+    /// window becomes floating where it stands (free to join the tiling
+    /// again with floating toggle), an already-floating one stays.
+    /// </summary>
+    public void ReleaseForDragging(IntPtr hwnd)
+    {
+        var handle = hwnd.ToInt64();
+        if (!_managedHandles.Contains(handle))
+            return;
+
+        UnmanageWindow(handle);
+        _floatedByUser.Add(handle);
+        AppLog.Info($"drag: released 0x{handle:X} from the tiling");
+    }
+
     public void RefreshWindows()
     {
         if (_disposed)
             return;
 
-        ForgetDeadWindows();
-        ReconcileMonitors();
-        ReassignWindows();
-        ReconcileUserWindowChanges();
-        DiscoverNewWindows();
-        ApplyLayout();
+        try
+        {
+            ForgetDeadWindows();
+            ReconcileMonitors();
+            ReassignWindows();
+            ReconcileUserWindowChanges();
+            DiscoverNewWindows();
+            ApplyLayout();
+            RefreshIndicators();
+        }
+        catch (Exception error)
+        {
+            // A refresh can meet the system mid-display-reconfiguration, a
+            // dead window handle or anything else transient; the tiling
+            // must survive it and the next event re-syncs.
+            AppLog.Warn($"refresh failed: {error.Message}");
+            DebounceRefresh();
+        }
     }
 
     /// <summary>
@@ -119,16 +173,49 @@ internal sealed class WindowManager : IDisposable
     /// </summary>
     private const int PositionTolerance = 1;
 
+    /// <summary>
+    /// A window refusing its tiled rectangle by more than this feeds its
+    /// actual extent back into the layout; smaller differences are
+    /// rounding noise that would make the weights oscillate.
+    /// </summary>
+    private const int RefusalTolerance = 4;
+
     public void ApplyLayout()
     {
+        // Windows that refuse to shrink below a program-imposed minimum
+        // keep that size as their layout weight and the siblings share what
+        // remains; a few passes let the layout settle.
+        for (var pass = 0; pass < 4; pass++)
+        {
+            if (!ApplyLayoutPass())
+                break;
+        }
+    }
+
+    /// <summary>
+    /// One layout application; returns true when a window refused its
+    /// rectangle and the new weights need another pass.
+    /// </summary>
+    private bool ApplyLayoutPass()
+    {
+        var resized = false;
         foreach (var monitor in _monitors.Values)
         {
             var assignments = _workspaces.ComputeActiveLayout(monitor.DeviceName, monitor.WorkArea, _options);
+            var assigned = new HashSet<long>(assignments.Select(a => a.WindowHandle));
             foreach (var (handle, rect) in assignments)
             {
                 var hwnd = new IntPtr(handle);
                 if (Win32.IsIconic(hwnd) || !Win32.GetWindowRect(hwnd, out var current))
                     continue;
+
+                // A window that just became visible (an activated tab) shows
+                // first; members without an area hide after the loop.
+                if (!Win32.IsWindowVisible(hwnd))
+                {
+                    Win32.ShowWindow(hwnd, Win32.SW_SHOW);
+                    _hiddenByUs.Remove(handle);
+                }
 
                 if (NearlyAt(current, rect))
                 {
@@ -150,8 +237,42 @@ internal sealed class WindowManager : IDisposable
                     ? new Rect(placed.Left, placed.Top, placed.Right - placed.Left, placed.Bottom - placed.Top)
                     : rect;
                 _placements[handle] = new LayoutPlacement(rect, actual);
+
+                // A window that kept a bigger size than the layout asked
+                // for (its program's minimum) would overlap its siblings;
+                // its actual extent becomes its weight so the siblings
+                // share the rest on the next pass.
+                if (actual.Width - rect.Width > RefusalTolerance &&
+                    _workspaces.ApplyUserResize(handle, ResizeAxis.Width, actual.Width))
+                {
+                    resized = true;
+                }
+                else if (actual.Height - rect.Height > RefusalTolerance &&
+                    _workspaces.ApplyUserResize(handle, ResizeAxis.Height, actual.Height))
+                {
+                    resized = true;
+                }
+            }
+
+            // Tabbed containers give only one member an area; the others
+            // stay hidden until focus switches to them. Hidden here, not
+            // unmanaged: they come back when their tab is activated.
+            var active = _workspaces.ActiveOn(monitor.DeviceName);
+            foreach (var handle in active.WindowHandles)
+            {
+                if (assigned.Contains(handle))
+                    continue;
+
+                var hwnd = new IntPtr(handle);
+                if (Win32.IsWindowVisible(hwnd))
+                {
+                    Win32.ShowWindow(hwnd, Win32.SW_HIDE);
+                    _hiddenByUs.Add(handle);
+                }
             }
         }
+
+        return resized;
     }
 
     public void FocusRelative(int offset)
@@ -160,8 +281,15 @@ internal sealed class WindowManager : IDisposable
         if (!_workspaces.FocusRelative(output, offset))
             return;
 
+        // In a tabbed container the newly focused window had no area; the
+        // re-applied layout shows it and hides the previous tab.
+        ApplyLayout();
+
         if (_workspaces.ActiveOn(output).FocusedWindowHandle is { } handle)
             Win32.SetForegroundWindow(new IntPtr(handle));
+
+        // The pointer follows the focus, like the workspace switch does.
+        WarpCursorToWorkspace(output);
     }
 
     public void MoveFocused(int offset)
@@ -177,9 +305,30 @@ internal sealed class WindowManager : IDisposable
     }
 
     /// <summary>
-    /// Toggles the focused window between the tiling and floating: a managed
-    /// window is released to move and resize freely where it stands, a
-    /// floating window joins the tiling of the display it is on.
+    /// Presents the split of the focused window as tabs, like i3's
+    /// <c>layout tabbed</c>: one window shows at a time and focus left/right
+    /// switches between them.
+    /// </summary>
+    public void SetTabbed() => SetLayoutMode(LayoutMode.Tabbed);
+
+    /// <summary>
+    /// Returns the split of the focused window to normal tiling, like i3's
+    /// <c>layout default</c>.
+    /// </summary>
+    public void SetSplit() => SetLayoutMode(LayoutMode.Split);
+
+    private void SetLayoutMode(LayoutMode mode)
+    {
+        _workspaces.SetLayoutMode(ActiveMonitor().DeviceName, mode);
+        ApplyLayout();
+    }
+
+    /// <summary>
+    /// Toggles the focused window between the tiling and floating: a
+    /// managed window is released to move and resize freely — visibly
+    /// inset from the tile it leaves, staying floating across rescans —
+    /// and a floating window joins the tiling of the display it is on,
+    /// even when a floating rule excluded it: the explicit toggle wins.
     /// </summary>
     public void ToggleFloating()
     {
@@ -190,13 +339,31 @@ internal sealed class WindowManager : IDisposable
         var handle = foreground.ToInt64();
         if (_managedHandles.Contains(handle))
         {
+            if (Win32.GetWindowRect(foreground, out var current))
+            {
+                // Inset from the tile so the toggle is visible, like a
+                // floating window detached from the layout.
+                var width = (current.Right - current.Left) * 3 / 4;
+                var height = (current.Bottom - current.Top) * 3 / 4;
+                Win32.SetWindowPos(
+                    foreground,
+                    IntPtr.Zero,
+                    current.Left + (current.Right - current.Left - width) / 2,
+                    current.Top + (current.Bottom - current.Top - height) / 2,
+                    width,
+                    height,
+                    Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
+            }
+
             UnmanageWindow(handle);
+            _floatedByUser.Add(handle);
             return;
         }
 
-        if (!IsTileable(foreground, requireVisible: true))
+        if (!IsTileable(foreground, requireVisible: true, ignoreFloatingRules: true))
             return;
 
+        _floatedByUser.Remove(handle);
         _workspaces.AddWindow(handle, ActiveMonitor().DeviceName);
         _managedHandles.Add(handle);
         _placements.Remove(handle);
@@ -204,31 +371,72 @@ internal sealed class WindowManager : IDisposable
     }
 
     /// <summary>
-    /// Toggles the windows matching the rule, independent of workspaces: the
-    /// topmost visible one hides, and a hidden one shows and takes focus.
-    /// The state is the window's own visibility, so the toggle survives
-    /// restarts.
+    /// Toggles the windows matching the rule onto the workspace that is
+    /// active: a hidden one shows there, one visible elsewhere follows
+    /// the user instead of hiding, and one already on the active
+    /// workspace hides. The state is the window's own visibility, so the
+    /// toggle survives restarts.
     /// </summary>
     public void ToggleScratchpad(WindowRule rule)
     {
+        var output = ActiveMonitor().DeviceName;
+        var active = _workspaces.ActiveOn(output).Index;
+
         if (FindRuleMatch(rule, requireVisible: true) is { } visible)
         {
-            Win32.ShowWindow(new IntPtr(visible), Win32.SW_HIDE);
+            if (_scratchpadHomes.TryGetValue(visible, out var home) &&
+                home.Output == output && home.Index == active)
+            {
+                Win32.ShowWindow(new IntPtr(visible), Win32.SW_HIDE);
+                return;
+            }
+
+            // Visible, but not on the workspace the user is on.
+            ShowScratchpad(visible, output, active);
             return;
         }
 
         if (FindRuleMatch(rule, requireVisible: false) is { } hidden)
-        {
-            var hwnd = new IntPtr(hidden);
-            Win32.ShowWindow(hwnd, Win32.SW_SHOW);
+            ShowScratchpad(hidden, output, active);
+    }
 
-            // Like i3's floating windows sit above the tiling, a shown
-            // scratchpad window is pinned above the tiled layer.
+    /// <summary>
+    /// Brings a scratchpad window onto the workspace that is active:
+    /// inside the active display's work area when it is not there yet,
+    /// always above the tiling and focused, remembering the workspace it
+    /// now belongs to.
+    /// </summary>
+    private void ShowScratchpad(long handle, string output, int active)
+    {
+        var hwnd = new IntPtr(handle);
+        var monitor = MonitorByName(output) ?? PrimaryMonitor();
+        if (Win32.GetWindowRect(hwnd, out var rect) &&
+            (rect.Left < monitor.WorkArea.X ||
+             rect.Top < monitor.WorkArea.Y ||
+             rect.Right > monitor.WorkArea.Right ||
+             rect.Bottom > monitor.WorkArea.Bottom))
+        {
+            // Bring it inside the work area, keeping its size.
+            var width = rect.Right - rect.Left;
+            var height = rect.Bottom - rect.Top;
             Win32.SetWindowPos(
-                hwnd, Win32.HWND_TOPMOST, 0, 0, 0, 0,
-                Win32.SWP_NOACTIVATE | Win32.SWP_NOMOVE | Win32.SWP_NOSIZE);
-            Win32.SetForegroundWindow(hwnd);
+                hwnd,
+                IntPtr.Zero,
+                monitor.WorkArea.X + (monitor.WorkArea.Width - width) / 2,
+                monitor.WorkArea.Y + (monitor.WorkArea.Height - height) / 2,
+                0, 0,
+                Win32.SWP_NOSIZE | Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
         }
+
+        Win32.ShowWindow(hwnd, Win32.SW_SHOW);
+
+        // Like i3's floating windows sit above the tiling, a shown
+        // scratchpad window is pinned above the tiled layer.
+        Win32.SetWindowPos(
+            hwnd, Win32.HWND_TOPMOST, 0, 0, 0, 0,
+            Win32.SWP_NOACTIVATE | Win32.SWP_NOMOVE | Win32.SWP_NOSIZE);
+        Win32.SetForegroundWindow(hwnd);
+        _scratchpadHomes[handle] = (output, active);
     }
 
     /// <summary>The first window in z-order whose class and title match the
@@ -276,7 +484,24 @@ internal sealed class WindowManager : IDisposable
     public void SwitchWorkspace(int index)
     {
         var result = _workspaces.SwitchTo(index, ActiveMonitor().DeviceName);
+        ApplySwitch(result, index);
+    }
 
+    /// <summary>
+    /// Switches to the workspace that was active before the current one on
+    /// this display, like i3's workspace back_and_forth.
+    /// </summary>
+    public void SwitchBackAndForth()
+    {
+        var output = ActiveMonitor().DeviceName;
+        var result = _workspaces.SwitchToBackAndForth(output);
+        ApplySwitch(result, _workspaces.ActiveOn(output).Index);
+    }
+
+    /// <summary>Shows and hides the windows the switch commands and moves
+    /// focus, feedback and the pointer onto the new workspace.</summary>
+    private void ApplySwitch(SwitchResult result, int index)
+    {
         foreach (var change in result.Changes)
         {
             if (!change.Changed)
@@ -309,6 +534,60 @@ internal sealed class WindowManager : IDisposable
 
         if (_workspaces.TryGet(index)?.FocusedWindowHandle is { } focused)
             Win32.SetForegroundWindow(new IntPtr(focused));
+
+        // The pointer follows the switch, like i3 warps it into the newly
+        // focused window of the new workspace.
+        WarpCursorToWorkspace(result.Changes[0].Output);
+    }
+
+    /// <summary>
+    /// Resizes the focused window along the split axis by the delta, like
+    /// i3's resize command: the sibling windows in the split adapt, and
+    /// nothing happens when the window has no sibling to share with.
+    /// </summary>
+    public void ResizeFocused(ResizeAxis axis, int delta)
+    {
+        var output = ActiveMonitor().DeviceName;
+        if (_workspaces.ActiveOn(output).FocusedWindowHandle is not { } handle)
+            return;
+
+        if (!Win32.GetWindowRect(new IntPtr(handle), out var rect))
+            return;
+
+        var size = axis == ResizeAxis.Width ? rect.Right - rect.Left : rect.Bottom - rect.Top;
+        if (_workspaces.ApplyUserResize(handle, axis, size + delta))
+        {
+            _placements.Remove(handle);
+            ApplyLayout();
+        }
+    }
+
+    /// <summary>
+    /// Moves the mouse pointer onto the workspace that just became active:
+    /// into the middle of its focused window when there is one, else the
+    /// middle of the display it is bound to.
+    /// </summary>
+    private void WarpCursorToWorkspace(string deviceName)
+    {
+        int x;
+        int y;
+        if (_workspaces.ActiveOn(deviceName).FocusedWindowHandle is { } handle &&
+            Win32.GetWindowRect(new IntPtr(handle), out var rect))
+        {
+            x = (rect.Left + rect.Right) / 2;
+            y = (rect.Top + rect.Bottom) / 2;
+        }
+        else if (MonitorByName(deviceName) is { } monitor)
+        {
+            x = monitor.WorkArea.X + monitor.WorkArea.Width / 2;
+            y = monitor.WorkArea.Y + monitor.WorkArea.Height / 2;
+        }
+        else
+        {
+            return;
+        }
+
+        Win32.SetCursorPos(x, y);
     }
 
     /// <summary>
@@ -353,9 +632,24 @@ internal sealed class WindowManager : IDisposable
         var source = ActiveMonitor();
         var target = monitors[(monitors.IndexOf(source) + 1) % monitors.Count];
 
+        // The workspace showing on the target stays bound there, but must
+        // not stay visible under the incoming one.
+        var previousOnTarget = _workspaces.GetActiveIndex(target.DeviceName);
+
         var move = _workspaces.MoveActiveWorkspaceToOutput(source.DeviceName, target.DeviceName);
         if (move is null)
             return;
+
+        if (previousOnTarget is int previous &&
+            previous != move.MovedIndex &&
+            _workspaces.TryGet(previous) is { } previousWorkspace)
+        {
+            foreach (var handle in previousWorkspace.WindowHandles)
+            {
+                Win32.ShowWindow(new IntPtr(handle), Win32.SW_HIDE);
+                _hiddenByUs.Add(handle);
+            }
+        }
 
         ShowAllWindows(move.MovedIndex);
         ShowAllWindows(move.SourceReplacementIndex);
@@ -373,10 +667,35 @@ internal sealed class WindowManager : IDisposable
     /// </summary>
     private void NotifyActiveWorkspace(string deviceName)
     {
-        if (_monitors.Values.FirstOrDefault(m =>
-                string.Equals(m.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase)) is not { } monitor)
+        if (MonitorByName(deviceName) is not { } monitor)
             return;
 
+        var (workspaces, active) = WorkspaceView(deviceName);
+        _indicator.Show(deviceName, monitor.WorkArea, workspaces, active);
+    }
+
+    /// <summary>
+    /// Brings every display's corner indicator in sync without announcing
+    /// anything; the switches themselves announce through
+    /// <see cref="NotifyActiveWorkspace"/>.
+    /// </summary>
+    private void RefreshIndicators()
+    {
+        foreach (var monitor in _monitors.Values)
+        {
+            var (workspaces, active) = WorkspaceView(monitor.DeviceName);
+            _indicator.Update(monitor.DeviceName, monitor.WorkArea, workspaces, active);
+        }
+
+        _indicator.CloseMissing(_monitors.Values.Select(m => m.DeviceName).ToList());
+    }
+
+    /// <summary>
+    /// The workspaces bound to the output with the active one among them,
+    /// in order — what the corner indicator displays for the display.
+    /// </summary>
+    private (IReadOnlyList<int> Workspaces, int Active) WorkspaceView(string deviceName)
+    {
         var workspaces = _workspaces.OutputBindings
             .Where(pair => string.Equals(pair.Value, deviceName, StringComparison.OrdinalIgnoreCase))
             .Select(pair => pair.Key)
@@ -389,8 +708,12 @@ internal sealed class WindowManager : IDisposable
             workspaces.Sort();
         }
 
-        _notifier.Show(monitor.WorkArea, workspaces, active);
+        return (workspaces, active);
     }
+
+    private MonitorInfo? MonitorByName(string deviceName) =>
+        _monitors.Values.FirstOrDefault(m =>
+            string.Equals(m.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase));
 
     public void Dispose()
     {
@@ -415,7 +738,7 @@ internal sealed class WindowManager : IDisposable
             _winEventHook = IntPtr.Zero;
         }
 
-        _notifier.Dispose();
+        _indicator.Dispose();
     }
 
     private void OnWinEvent(
@@ -476,6 +799,12 @@ internal sealed class WindowManager : IDisposable
             _managedHandles.Remove(handle);
             _placements.Remove(handle);
         }
+
+        foreach (var handle in _floatedByUser.ToList())
+        {
+            if (!Win32.IsWindow(new IntPtr(handle)))
+                _floatedByUser.Remove(handle);
+        }
     }
 
     /// <summary>
@@ -494,6 +823,12 @@ internal sealed class WindowManager : IDisposable
             // Replace the entry so work areas follow resolution changes.
             _monitors[info.Handle] = info;
         }
+
+        // A display reconfiguration can transiently enumerate no displays
+        // at all; keeping the last known displays beats acting on an
+        // empty list.
+        if (current.Count == 0)
+            return;
 
         foreach (var disconnected in _monitors.Keys.Where(h => !current.Contains(h)).ToList())
             _monitors.Remove(disconnected);
@@ -611,16 +946,52 @@ internal sealed class WindowManager : IDisposable
         Win32.EnumWindows((hwnd, _) =>
         {
             var handle = hwnd.ToInt64();
-            if (_managedHandles.Contains(handle) || !Win32.IsWindow(hwnd))
+            if (_managedHandles.Contains(handle) ||
+                _floatedByUser.Contains(handle) ||
+                !Win32.IsWindow(hwnd))
                 return true;
 
             if (!IsTileable(hwnd, requireVisible: true))
                 return true;
 
-            _workspaces.AddWindow(handle, MonitorFor(hwnd).DeviceName);
+            var device = MonitorFor(hwnd).DeviceName;
+            if (MoveRuleFor(hwnd) is { } move)
+            {
+                // A for_window move rule sends the window to its workspace
+                // instead of the active one, hidden until shown there.
+                _workspaces.AddWindowTo(move.Parameter, handle, device);
+                _managedHandles.Add(handle);
+                if (_workspaces.GetActiveIndex(device) != move.Parameter)
+                {
+                    Win32.ShowWindow(hwnd, Win32.SW_HIDE);
+                    _hiddenByUs.Add(handle);
+                }
+
+                return true;
+            }
+
+            // New windows join the workspace the user is on, even when the
+            // program opens its window on another display.
+            _workspaces.AddWindow(handle, ActiveMonitor().DeviceName);
             _managedHandles.Add(handle);
             return true;
         }, IntPtr.Zero);
+    }
+
+    /// <summary>
+    /// The first for_window rule that moves this window to a workspace, if
+    /// the window matches one.
+    /// </summary>
+    private WindowRule? MoveRuleFor(IntPtr hwnd)
+    {
+        var className = new StringBuilder(256);
+        Win32.GetClassName(hwnd, className, className.Capacity);
+        var title = new StringBuilder(512);
+        Win32.GetWindowText(hwnd, title, title.Capacity);
+
+        return _rules.FirstOrDefault(rule =>
+            rule.Action == WindowRuleAction.MoveToWorkspace &&
+            rule.Matches(className.ToString(), title.ToString()));
     }
 
     private void ShowAllWindows(int index)
@@ -698,7 +1069,7 @@ internal sealed class WindowManager : IDisposable
     /// is false, hidden windows pass too; the caller must then place them
     /// on a remembered workspace only.
     /// </summary>
-    private bool IsTileable(IntPtr hwnd, bool requireVisible)
+    private bool IsTileable(IntPtr hwnd, bool requireVisible, bool ignoreFloatingRules = false)
     {
         if (!Win32.IsWindow(hwnd) || (requireVisible && !Win32.IsWindowVisible(hwnd)))
             return false;
@@ -734,15 +1105,25 @@ internal sealed class WindowManager : IDisposable
         if ((style & Win32.WS_POPUP) != 0 && (style & Win32.WS_CAPTION) == 0)
             return false;
 
+        // Owned top-level windows are dialog boxes, message boxes and the
+        // like — transient surfaces of another window that ride above
+        // their owner, never tiles. This is Win32's counterpart of i3
+        // floating the dialog window type automatically.
+        if (Win32.GetWindow(hwnd, Win32.GW_OWNER) != IntPtr.Zero)
+            return false;
+
         var title = new StringBuilder(512);
         if (Win32.GetWindowText(hwnd, title, title.Capacity) == 0)
             return false;
 
-        // for_window rules decide first: matched windows are never managed,
-        // like i3's floating enable leaves a window outside the tiling.
+        // for_window floating rules decide first: matched windows are never
+        // managed, like i3's floating enable leaves a window outside the
+        // tiling. Move rules leave discovery to assign the workspace.
         foreach (var rule in _rules)
         {
-            if (rule.Matches(className.ToString(), title.ToString()))
+            if (rule.Action == WindowRuleAction.Floating &&
+                !ignoreFloatingRules &&
+                rule.Matches(className.ToString(), title.ToString()))
                 return false;
         }
 
