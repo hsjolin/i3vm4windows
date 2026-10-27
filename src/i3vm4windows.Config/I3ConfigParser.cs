@@ -28,6 +28,8 @@ public static class I3ConfigParser
         var exec = new List<string>();
         var minWindowWidth = 400;
         string? mode = null;
+        var inBar = false;
+        var bar = new BarSettings();
 
         foreach (var original in JoinContinuations(text))
         {
@@ -62,6 +64,37 @@ public static class I3ConfigParser
             if (mode is not null && tokens[0] == "}")
             {
                 mode = null;
+                continue;
+            }
+
+            // bar { ... } collects the bar configuration.
+            if (inBar)
+            {
+                if (tokens[0] == "}")
+                {
+                    inBar = false;
+                    continue;
+                }
+
+                ParseBarDirective(tokens, line, bar, warnings);
+                continue;
+            }
+
+            if (tokens[0].Equals("bar", StringComparison.OrdinalIgnoreCase))
+            {
+                if (mode is not null)
+                {
+                    warnings.Add($"Nested block: {line}");
+                    continue;
+                }
+
+                if (tokens.Length == 2 && tokens[1] == "{")
+                {
+                    inBar = true;
+                    continue;
+                }
+
+                warnings.Add($"Unsupported bar directive: {line}");
                 continue;
             }
 
@@ -117,7 +150,97 @@ public static class I3ConfigParser
             }
         }
 
-        return new I3Config(bindings.Values.ToList(), warnings, rules, exec, minWindowWidth);
+        return new I3Config(bindings.Values.ToList(), warnings, rules, exec, minWindowWidth, bar.ToConfig());
+    }
+
+    /// <summary>The bar block's directives as they are parsed.</summary>
+    private sealed class BarSettings
+    {
+        public string Position = "top";
+        public int Height = 30;
+        public bool Clock;
+        public bool Date;
+        public bool Cpu;
+        public bool Memory;
+        public List<string> Commands = new();
+
+        public BarConfig ToConfig() => new(
+            Position, Height, Clock, Date, Cpu, Memory, Commands);
+    }
+
+    /// <summary>
+    /// Parses one directive of the bar block: position top|bottom, the
+    /// height in pixels, the built-in status items (clock, date, cpu,
+    /// memory) as yes/no, and exec commands whose first output line the
+    /// bar displays. Other i3 bar directives (status_command, font, ...)
+    /// are ignored silently, so real i3 configurations parse cleanly.
+    /// </summary>
+    private static void ParseBarDirective(
+        string[] tokens, string line, BarSettings bar, List<string> warnings)
+    {
+        switch (tokens[0].ToLowerInvariant())
+        {
+            case "position" when tokens.Length == 2 &&
+                tokens[1].Equals("top", StringComparison.OrdinalIgnoreCase):
+                bar.Position = "top";
+                return;
+
+            case "position" when tokens.Length == 2 &&
+                tokens[1].Equals("bottom", StringComparison.OrdinalIgnoreCase):
+                bar.Position = "bottom";
+                return;
+
+            case "position":
+                warnings.Add($"Unsupported bar position: {line}");
+                return;
+
+            case "height" when tokens.Length == 2 && int.TryParse(tokens[1], out var height):
+                if (height is < 16 or > 200)
+                {
+                    warnings.Add($"Bar height out of range: {line}");
+                    return;
+                }
+
+                bar.Height = height;
+                return;
+
+            case "height":
+                warnings.Add($"Unsupported bar height: {line}");
+                return;
+
+            case "clock":
+            case "date":
+            case "cpu":
+            case "memory":
+                var enabled = tokens.Length == 2 &&
+                    tokens[1].Equals("yes", StringComparison.OrdinalIgnoreCase);
+                var disabled = tokens.Length == 1 ||
+                    (tokens.Length == 2 && tokens[1].Equals("no", StringComparison.OrdinalIgnoreCase));
+                if (!enabled && !disabled)
+                {
+                    warnings.Add($"Unsupported bar value: {line}");
+                    return;
+                }
+
+                switch (tokens[0].ToLowerInvariant())
+                {
+                    case "clock": bar.Clock = enabled; return;
+                    case "date": bar.Date = enabled; return;
+                    case "cpu": bar.Cpu = enabled; return;
+                    case "memory": bar.Memory = enabled; return;
+                }
+
+                return;
+
+            case "exec" when tokens.Length > 1:
+                bar.Commands.Add(string.Join(' ', tokens[1..]));
+                return;
+
+            default:
+                // Other i3 bar directives are this app's business
+                // neither way, and real configurations carry them.
+                return;
+        }
     }
 
     /// <summary>

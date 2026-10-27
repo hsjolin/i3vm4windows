@@ -60,13 +60,31 @@ public sealed record Binding(
     WindowRule? Rule = null,
     string Mode = "default");
 
+/// <summary>
+/// The bar's configuration, from the bar block of the configuration
+/// file. The defaults describe the plain bar: top of every display,
+/// 30 pixels tall, no status output.
+/// </summary>
+public sealed record BarConfig(
+    string Position = "top",
+    int Height = 30,
+    bool Clock = false,
+    bool Date = false,
+    bool Cpu = false,
+    bool Memory = false,
+    IReadOnlyList<string>? StatusCommands = null)
+{
+    public IReadOnlyList<string> Commands => StatusCommands ?? Array.Empty<string>();
+}
+
 /// <summary>The result of parsing a configuration file.</summary>
 public sealed record I3Config(
     IReadOnlyList<Binding> Bindings,
     IReadOnlyList<string> Warnings,
     IReadOnlyList<WindowRule> Rules,
     IReadOnlyList<string> Exec,
-    int MinWindowWidth = 400);
+    int MinWindowWidth = 400,
+    BarConfig? Bar = null);
 
 /// <summary>What a for_window rule does with the windows it matches.</summary>
 public enum WindowRuleAction

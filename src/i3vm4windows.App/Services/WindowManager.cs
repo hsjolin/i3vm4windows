@@ -51,7 +51,8 @@ internal sealed class WindowManager : IDisposable
     /// handle; toggle decisions compare it with the active workspace.
     /// </summary>
     private readonly Dictionary<long, (string Output, int Index)> _scratchpadHomes = new();
-    private readonly WorkspaceBar _bar = new();
+    private readonly BarConfig _barConfig;
+    private readonly WorkspaceBar _bar;
     private readonly DispatcherTimer _refreshTimer;
     private readonly uint _ownProcessId;
     private readonly Win32.WinEventDelegate _winEventDelegate;
@@ -59,10 +60,15 @@ internal sealed class WindowManager : IDisposable
     private IntPtr _winEventHook;
     private bool _disposed;
 
-    public WindowManager(IReadOnlyList<WindowRule>? rules = null, LayoutOptions? options = null)
+    public WindowManager(
+        IReadOnlyList<WindowRule>? rules = null,
+        LayoutOptions? options = null,
+        BarConfig? bar = null)
     {
         _rules = rules ?? Array.Empty<WindowRule>();
         _options = options ?? _options;
+        _barConfig = bar ?? new BarConfig();
+        _bar = new WorkspaceBar(_barConfig);
         _ownProcessId = (uint)Environment.ProcessId;
         _refreshTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
@@ -850,23 +856,22 @@ internal sealed class WindowManager : IDisposable
     {
         var current = new HashSet<IntPtr>();
         var devices = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var atBottom = _barConfig.Position == "bottom";
         foreach (var info in MonitorInfo.Enumerate())
         {
             current.Add(info.Handle);
             devices.Add(info.DeviceName);
             // Replace the entry so work areas follow resolution changes,
-            // with the bar's strip taken off the top: the tiling, the
-            // indicator and everything else reads this adjusted area, and
-            // the bar itself covers the freed strip.
+            // with the bar's strip taken off its edge: the tiling, and
+            // everything else that reads work areas, uses the adjusted
+            // area, and the bar covers the freed strip.
             var work = info.WorkArea;
-            _monitors[info.Handle] = info with
-            {
-                WorkArea = new Rect(
-                    work.X,
-                    work.Y + WorkspaceBar.Height,
-                    work.Width,
-                    Math.Max(1, work.Height - WorkspaceBar.Height)),
-            };
+            var adjusted = atBottom
+                ? new Rect(work.X, work.Y, work.Width, Math.Max(1, work.Height - _barConfig.Height))
+                : new Rect(
+                    work.X, work.Y + _barConfig.Height,
+                    work.Width, Math.Max(1, work.Height - _barConfig.Height));
+            _monitors[info.Handle] = info with { WorkArea = adjusted };
         }
 
         // A display reconfiguration can transiently enumerate no displays

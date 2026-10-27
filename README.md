@@ -203,14 +203,32 @@ opens it in your default text editor.
 
 ## Bar
 
-Every display carries a bar along the top, like i3's status bar: the
-workspace numbers bound to the display with the active one highlighted,
-and — when the workspace shows tabs — every tab's window title with the
-active one highlighted, hidden tabs included. The tiling keeps its
-distance: the tiler takes the bar's strip off the top of every work
-area, and the bar floats above everything else. Maximized floating
-windows can slide under it. Configuration of the bar through the
-configuration file is on the roadmap.
+Every display carries a bar, like i3's status bar: the workspace numbers
+bound to the display with the active one highlighted, and — when the
+workspace shows tabs — every tab's window title with the active one
+highlighted, hidden tabs included. The tiler takes the bar's strip off
+the work area, and the bar floats above everything else; maximized
+floating windows can slide under it.
+
+The `bar { ... }` block configures it:
+
+```i3
+bar {
+  position top          # or bottom
+  height 30
+  clock yes             # HH:mm
+  date no               # yyyy-MM-dd
+  cpu yes               # busy percentage
+  memory yes            # used physical memory percentage
+  # Commands whose first line of output shows in the bar, refreshed
+  # every couple of seconds; they run through cmd.exe, so pipes and
+  # scripts work.
+  exec "powershell -c \"[math]::Round((Get-Counter '\\Processor(_Total)\\% Processor Time').CounterSamples.CookedValue)\""
+}
+```
+
+Everything defaults to off: without a bar block the bar shows the
+workspaces and tab titles only.
 
 ## State
 

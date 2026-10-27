@@ -599,4 +599,66 @@ public class I3ConfigParserTests
         Assert.Equal(400, nonPositive.MinWindowWidth);
         Assert.Single(nonPositive.Warnings);
     }
+
+    [Fact]
+    public void Bar_block_collects_the_configuration()
+    {
+        var config = I3ConfigParser.Parse("""
+            bar {
+              position bottom
+              height 40
+              clock yes
+              date no
+              cpu yes
+              memory yes
+              exec powershell -c "Get-Random"
+            }
+            """);
+
+        var bar = config.Bar!;
+        Assert.Equal("bottom", bar.Position);
+        Assert.Equal(40, bar.Height);
+        Assert.True(bar.Clock);
+        Assert.False(bar.Date);
+        Assert.True(bar.Cpu);
+        Assert.True(bar.Memory);
+        var command = Assert.Single(bar.Commands);
+        Assert.Equal("powershell -c \"Get-Random\"", command);
+        Assert.Empty(config.Warnings);
+    }
+
+    [Fact]
+    public void Bar_defaults_without_a_block()
+    {
+        var config = I3ConfigParser.Parse("""
+            bindsym Mod4+1 workspace 1
+            """);
+
+        var bar = config.Bar!;
+        Assert.Equal("top", bar.Position);
+        Assert.Equal(30, bar.Height);
+        Assert.False(bar.Clock);
+        Assert.False(bar.Date);
+        Assert.False(bar.Cpu);
+        Assert.False(bar.Memory);
+        Assert.Empty(bar.Commands);
+    }
+
+    [Fact]
+    public void Bar_block_rejects_unknown_directives_and_bad_values()
+    {
+        var config = I3ConfigParser.Parse("""
+            bar {
+                position sideways
+                height 500
+                clock maybe
+                frobnicate yes
+            }
+            """);
+
+        Assert.Equal("top", config.Bar!.Position);
+        Assert.Equal(30, config.Bar!.Height);
+        Assert.False(config.Bar!.Clock);
+        Assert.Equal(3, config.Warnings.Count);
+    }
 }

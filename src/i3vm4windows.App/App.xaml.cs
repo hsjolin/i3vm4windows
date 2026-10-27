@@ -39,7 +39,7 @@ public partial class App : System.Windows.Application
         AppLog.Info($"configuration: {config.Bindings.Count} bindings, " +
             $"{config.Rules.Count} rules, {config.Exec.Count} autostarts");
 
-        _windowManager = new WindowManager(config.Rules, LayoutOptionsFor(config));
+        _windowManager = new WindowManager(config.Rules, LayoutOptionsFor(config), config.Bar);
         _windowManager.Start();
 
         _hotkeyHost = new HotkeyHost();
