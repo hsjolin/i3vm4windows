@@ -26,6 +26,7 @@ public static class I3ConfigParser
         var bindings = new Dictionary<(string Mode, Modifiers Modifiers, string Key), Binding>();
         var rules = new List<WindowRule>();
         var exec = new List<string>();
+        var minWindowWidth = 400;
         string? mode = null;
 
         foreach (var original in JoinContinuations(text))
@@ -100,6 +101,15 @@ public static class I3ConfigParser
                     ParseExec(tokens, exec, warnings, line);
                     break;
 
+                case "min_window_width":
+                    // The smallest width a window keeps before the layout
+                    // overlaps windows instead of shrinking them further.
+                    if (tokens.Length == 2 && int.TryParse(tokens[1], out var minWidth) && minWidth > 0)
+                        minWindowWidth = minWidth;
+                    else
+                        warnings.Add($"Unsupported min_window_width: {line}");
+                    break;
+
                 default:
                     if (tokens[0].Equals("bindcode", StringComparison.OrdinalIgnoreCase))
                         warnings.Add($"bindcode is not supported: {line}");
@@ -107,7 +117,7 @@ public static class I3ConfigParser
             }
         }
 
-        return new I3Config(bindings.Values.ToList(), warnings, rules, exec);
+        return new I3Config(bindings.Values.ToList(), warnings, rules, exec, minWindowWidth);
     }
 
     /// <summary>

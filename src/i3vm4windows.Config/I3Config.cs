@@ -65,7 +65,8 @@ public sealed record I3Config(
     IReadOnlyList<Binding> Bindings,
     IReadOnlyList<string> Warnings,
     IReadOnlyList<WindowRule> Rules,
-    IReadOnlyList<string> Exec);
+    IReadOnlyList<string> Exec,
+    int MinWindowWidth = 400);
 
 /// <summary>What a for_window rule does with the windows it matches.</summary>
 public enum WindowRuleAction

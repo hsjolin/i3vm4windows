@@ -406,4 +406,93 @@ public sealed class TilingEngineTests
             Assert.Equal(2, layout.Count);
         }
     }
+
+    public sealed class MinWindowWidthTests
+    {
+        private static LayoutOptions Cards(int minWidth) => new()
+        {
+            OuterMargin = 0,
+            InnerGap = 0,
+            MinWindowWidth = minWidth,
+        };
+
+        [Fact]
+        public void NarrowSplit_OverlapsWindowsLikeACardDeck()
+        {
+            var (workspace, engine) = Create(100, 200, 300);
+
+            var layout = engine.ComputeLayout(workspace, new Rect(0, 0, 900, 500), Cards(400));
+
+            Assert.Equal(3, layout.Count);
+            // Every card keeps the minimum width and full height.
+            Assert.All(layout, a => Assert.Equal(400, a.Rect.Width));
+            Assert.All(layout, a => Assert.Equal(500, a.Rect.Height));
+            // The deck spreads across the area: each card overlaps the one
+            // to its left and the last one ends at the right edge.
+            Assert.Equal(0, layout[0].Rect.X);
+            Assert.Equal(250, layout[1].Rect.X);
+            Assert.Equal(500, layout[2].Rect.X);
+            Assert.Equal(900, layout[2].Rect.Right);
+        }
+
+        [Fact]
+        public void WideEnoughSplit_TilesNormally()
+        {
+            var (workspace, engine) = Create(100, 200);
+
+            var layout = engine.ComputeLayout(workspace, new Rect(0, 0, 900, 500), Cards(400));
+
+            Assert.Equal(2, layout.Count);
+            Assert.Equal(450, layout[0].Rect.Width);
+            Assert.Equal(450, layout[1].Rect.Width);
+            Assert.Equal(450, layout[1].Rect.X);
+        }
+
+        [Fact]
+        public void BoundarySpan_TurnsIntoACardDeck()
+        {
+            var (workspace, engine) = Create(100, 200);
+
+            // Exactly the minimum for both children: still a normal tiling.
+            var tiled = engine.ComputeLayout(workspace, new Rect(0, 0, 800, 500), Cards(400));
+            Assert.Equal(400, tiled[0].Rect.Width);
+            Assert.Equal(400, tiled[1].Rect.Width);
+
+            // One pixel less and the deck takes over.
+            var deck = engine.ComputeLayout(workspace, new Rect(0, 0, 799, 500), Cards(400));
+            Assert.Equal(400, deck[0].Rect.Width);
+            Assert.Equal(400, deck[1].Rect.Width);
+            Assert.Equal(399, deck[1].Rect.X);
+        }
+
+        [Fact]
+        public void VerticalSplit_IgnoresTheMinimumWidth()
+        {
+            var (workspace, engine) = Create(100, 200);
+            engine.ToggleOrientation(workspace);
+
+            var layout = engine.ComputeLayout(workspace, new Rect(0, 0, 700, 500), Cards(400));
+
+            Assert.Equal(2, layout.Count);
+            // Stacked windows keep the full width; the minimum applies to
+            // horizontal splits only.
+            Assert.All(layout, a => Assert.Equal(700, a.Rect.Width));
+            Assert.Equal(250, layout[0].Rect.Height);
+            Assert.Equal(250, layout[1].Rect.Height);
+        }
+
+        [Fact]
+        public void NarrowerThanTheMinimum_ClampsTheCardWidth()
+        {
+            var (workspace, engine) = Create(100, 200);
+
+            var layout = engine.ComputeLayout(workspace, new Rect(0, 0, 300, 500), Cards(400));
+
+            // Not even one card fits at the minimum: the deck collapses,
+            // every card the full (narrow) width of the area.
+            Assert.Equal(2, layout.Count);
+            Assert.All(layout, a => Assert.Equal(300, a.Rect.Width));
+            Assert.All(layout, a => Assert.Equal(0, a.Rect.X));
+        }
+    }
 }

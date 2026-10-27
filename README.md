@@ -25,8 +25,9 @@ Key bindings are configured with a regular i3 configuration file:
 - When the file is missing or yields no usable bindings, the built-in
   default configuration below applies.
 - Supported: comments, blank lines, backslash line continuations,
-  `set $name value` variables (quoted or not) and
-  `bindsym <keys> <command>` directives. Later bindings for the same key
+  `set $name value` variables (quoted or not),
+  `bindsym <keys> <command>` directives and the `min_window_width <px>`
+  layout directive. Later bindings for the same key
   combination replace earlier ones, like i3 does.
 - Bindings must include the Win key (`Mod4`): the app owns the Win key and
   dispatches combinations through its keyboard hook.
@@ -45,7 +46,7 @@ Key bindings are configured with a regular i3 configuration file:
 | `reload` | Rescan windows and re-apply layout |
 | `move workspace to output next` | Move the active workspace to the next monitor |
 | `exec [--no-startup-id] <program> [args]` | Start a program, e.g. a rofi-style launcher: `bindsym $mod+Space exec "C:\path\launcher.exe"` — a quoted path keeps its spaces |
-| `exec [--no-startup-id] <program> [args]` as its own directive | i3's autostart: start the program when the app starts with this configuration (a reload does not run them again) |
+| `exec [--no-startup-id] <program> [args]` as its own directive | i3's autostart: start the program when the app starts with this configuration |
 | `mode "<name>"` | Enter a binding mode (or return to the default one with `mode "default"`) |
 | `resize grow\|shrink width\|height <px> ...` | Resize the focused window along the split axis; the sibling windows adapt |
 
@@ -128,6 +129,13 @@ Windows that refuse to shrink below a program-imposed minimum size (most
 Chromium-based programs insist on about 500 pixels) keep that size; the
 sibling windows share the remaining space, so nothing overlaps.
 
+Minimum window width: `min_window_width <px>` (default `400`) sets the
+smallest width a horizontal split gives its children. When a split can no
+longer fit that width for every child, the windows stop shrinking and
+overlap like a spread deck of cards instead — each window keeps the minimum
+width and shows a strip of itself to the left of the next one, the focused
+window staying on top. Stacked (vertical) splits are unaffected.
+
 ## Default key bindings (v0.4)
 
 Workspaces are global and each is bound to the display it was created on;
@@ -147,7 +155,7 @@ configuration file replaces them.
 | Win + W | Present the split as tabs |
 | Win + E | Return the split to normal tiling |
 | Win + Q | Close focused window |
-| Win + X | Move the active workspace to the next monitor |
+| Win + X | Move the active workspace to the next monitor; the mouse pointer follows it there |
 | Win + Y | Rescan windows and re-apply layout |
 | Win + Left drag | Move the window under the pointer; a tiled window is released from the tiling (tile it back with `Win+Shift+Space`) |
 | Win + Right drag | Resize the window by the corner nearest the click |

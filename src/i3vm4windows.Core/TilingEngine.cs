@@ -232,6 +232,17 @@ public sealed class TilingEngine
         var span = (horizontal ? rect.Width : rect.Height) - options.InnerGap * (node.Children.Count - 1);
         node.LastUsableSpan = span;
 
+        // A horizontal split that cannot fit the minimum width for every
+        // child stops shrinking them: they overlap like a spread deck of
+        // cards instead, each showing a strip of itself.
+        if (horizontal &&
+            options.MinWindowWidth > 0 &&
+            span < options.MinWindowWidth * node.Children.Count)
+        {
+            ComputeCardDeck(node, rect, options, result, focused);
+            return;
+        }
+
         // Children share the span proportionally to their weights; leftover
         // pixels go to the children with the largest fractional parts.
         var totalWeight = node.Children.Sum(child => Math.Max(child.Weight, MinWeight));
@@ -271,6 +282,38 @@ public sealed class TilingEngine
             }
 
             position += size + options.InnerGap;
+        }
+    }
+
+    /// <summary>
+    /// Lays a horizontal split's children out like a spread deck of cards:
+    /// every child keeps the configured minimum width and overlaps the one
+    /// to its left, instead of shrinking below it. The children share the
+    /// full height and the last one ends at the right edge of the area.
+    /// </summary>
+    private static void ComputeCardDeck(
+        SplitNode node, Rect rect, LayoutOptions options, List<AssignedRect> result, long? focused)
+    {
+        var count = node.Children.Count;
+        var width = Math.Min(options.MinWindowWidth, rect.Width);
+        var spread = Math.Max(0, rect.Width - width);
+
+        for (var i = 0; i < count; i++)
+        {
+            // Rounded per child so the last card lands exactly on the right
+            // edge despite the integer step.
+            var offset = count > 1 ? (int)Math.Round(spread * (double)i / (count - 1)) : 0;
+            var slice = new Rect(rect.X + offset, rect.Y, width, rect.Height);
+
+            switch (node.Children[i])
+            {
+                case WindowNode window:
+                    result.Add(new AssignedRect(window.WindowHandle, slice));
+                    break;
+                case SplitNode split:
+                    ComputeSplit(split, slice, options, result, focused);
+                    break;
+            }
         }
     }
 

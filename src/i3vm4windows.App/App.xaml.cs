@@ -39,7 +39,7 @@ public partial class App : System.Windows.Application
         AppLog.Info($"configuration: {config.Bindings.Count} bindings, " +
             $"{config.Rules.Count} rules, {config.Exec.Count} autostarts");
 
-        _windowManager = new WindowManager(config.Rules);
+        _windowManager = new WindowManager(config.Rules, LayoutOptionsFor(config));
         _windowManager.Start();
 
         _hotkeyHost = new HotkeyHost();
@@ -103,39 +103,41 @@ public partial class App : System.Windows.Application
     }
 
     /// <summary>
-    /// Re-reads the configuration file and swaps the registered hotkeys
-    /// and window rules for the new set, like i3's reload. The current
-    /// configuration survives when the file cannot be read.
+    /// Restarts the app completely, like exiting and starting it again:
+    /// the running instance shuts down — restoring hidden windows and
+    /// releasing its hooks — while a fresh instance starts and loads the
+    /// configuration from scratch.
     /// </summary>
-    private void ReloadConfiguration()
+    private void RestartApplication()
     {
-        if (TryReadConfig(_configPath) is not { } config)
+        AppLog.Info("restarting on request");
+
+        if (Environment.ProcessPath is { } exe)
         {
-            _trayIcon?.ShowBalloonTip(
-                3000, "i3vm4windows",
-                $"Could not read {_configPath}; keeping the current configuration.",
-                System.Windows.Forms.ToolTipIcon.Error);
-            return;
+            try
+            {
+                Process.Start(new ProcessStartInfo { FileName = exe, UseShellExecute = true });
+            }
+            catch (Exception error)
+            {
+                AppLog.Warn($"cannot restart {exe}: {error.Message}");
+            }
         }
 
-        foreach (var warning in config.Warnings)
-            AppLog.Warn($"configuration: {warning}");
-
-        AppLog.Info($"reload: {config.Bindings.Count} bindings, " +
-            $"{config.Rules.Count} rules");
-
-        _hotkeyHost?.UnregisterAll();
-        _bindings.Clear();
-        _modes.Clear();
-        SetMode("default");
-        RegisterHotkeys(config);
-        _windowManager?.UpdateRules(config.Rules);
-
-        _trayIcon?.ShowBalloonTip(
-            2000, "i3vm4windows",
-            $"Reloaded {config.Bindings.Count} key bindings.",
-            System.Windows.Forms.ToolTipIcon.Info);
+        Shutdown();
     }
+
+    /// <summary>
+    /// The layout tuning the configuration controls: gaps are fixed for
+    /// now, the minimum window width comes from the min_window_width
+    /// directive (400 when the configuration does not set one).
+    /// </summary>
+    private static LayoutOptions LayoutOptionsFor(I3Config config) => new()
+    {
+        OuterMargin = 8,
+        InnerGap = 8,
+        MinWindowWidth = config.MinWindowWidth,
+    };
 
     private void RegisterHotkeys(I3Config config)
     {
@@ -369,7 +371,7 @@ public partial class App : System.Windows.Application
     private System.Windows.Forms.NotifyIcon CreateTrayIcon()
     {
         var menu = new System.Windows.Forms.ContextMenuStrip();
-        menu.Items.Add("Reload configuration", null, (_, _) => ReloadConfiguration());
+        menu.Items.Add("Reload i3vm4windows", null, (_, _) => RestartApplication());
         menu.Items.Add("Open log", null, (_, _) => Process.Start(new ProcessStartInfo
         {
             FileName = AppLog.Path,

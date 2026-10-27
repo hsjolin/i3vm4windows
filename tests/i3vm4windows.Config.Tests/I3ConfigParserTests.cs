@@ -554,4 +554,49 @@ public class I3ConfigParserTests
         Assert.Empty(config.Bindings);
         Assert.Single(config.Warnings);
     }
+
+    [Fact]
+    public void Min_window_width_directive_sets_the_minimum()
+    {
+        var config = I3ConfigParser.Parse("""
+            min_window_width 500
+            bindsym Mod4+q kill
+            """);
+
+        Assert.Equal(500, config.MinWindowWidth);
+        Assert.Empty(config.Warnings);
+    }
+
+    [Fact]
+    public void Min_window_width_defaults_to_400_without_the_directive()
+    {
+        var config = I3ConfigParser.Parse("""
+            bindsym Mod4+q kill
+            """);
+
+        Assert.Equal(400, config.MinWindowWidth);
+    }
+
+    [Fact]
+    public void Min_window_width_takes_variables_and_rejects_invalid_values()
+    {
+        var withVariable = I3ConfigParser.Parse("""
+            set $minw 300
+            min_window_width $minw
+            """);
+        Assert.Equal(300, withVariable.MinWindowWidth);
+        Assert.Empty(withVariable.Warnings);
+
+        var invalid = I3ConfigParser.Parse("""
+            min_window_width narrow
+            """);
+        Assert.Equal(400, invalid.MinWindowWidth);
+        Assert.Single(invalid.Warnings);
+
+        var nonPositive = I3ConfigParser.Parse("""
+            min_window_width 0
+            """);
+        Assert.Equal(400, nonPositive.MinWindowWidth);
+        Assert.Single(nonPositive.Warnings);
+    }
 }

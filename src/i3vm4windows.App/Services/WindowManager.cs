@@ -38,7 +38,7 @@ internal sealed class WindowManager : IDisposable
     private readonly record struct LayoutPlacement(Rect Requested, Rect Actual);
 
     private readonly Dictionary<long, LayoutPlacement> _placements = new();
-    private readonly LayoutOptions _options = new() { OuterMargin = 8, InnerGap = 8 };
+    private LayoutOptions _options = new() { OuterMargin = 8, InnerGap = 8 };
     private readonly HashSet<long> _managedHandles = new();
     /// <summary>
     /// Windows the user released from the tiling with floating toggle:
@@ -59,9 +59,10 @@ internal sealed class WindowManager : IDisposable
     private IntPtr _winEventHook;
     private bool _disposed;
 
-    public WindowManager(IReadOnlyList<WindowRule>? rules = null)
+    public WindowManager(IReadOnlyList<WindowRule>? rules = null, LayoutOptions? options = null)
     {
         _rules = rules ?? Array.Empty<WindowRule>();
+        _options = options ?? _options;
         _ownProcessId = (uint)Environment.ProcessId;
         _refreshTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
@@ -113,17 +114,6 @@ internal sealed class WindowManager : IDisposable
     {
         _refreshTimer.Stop();
         _refreshTimer.Start();
-    }
-
-    /// <summary>
-    /// Replaces the for_window rules after a configuration reload and
-    /// re-evaluates: rules decide which windows join the tiling, so the
-    /// ones already managed keep their state.
-    /// </summary>
-    public void UpdateRules(IReadOnlyList<WindowRule> rules)
-    {
-        _rules = rules;
-        RefreshWindows();
     }
 
     /// <summary>
@@ -655,10 +645,38 @@ internal sealed class WindowManager : IDisposable
         ShowAllWindows(move.SourceReplacementIndex);
 
         ApplyLayout();
+
+        // The moved workspace's hidden members (tabs) still sit at their
+        // old display's coordinates; park them inside the target's work
+        // area, so nothing treats their stale position as another
+        // display's and their reveal lands where it should.
+        var workArea = target.WorkArea;
+        var movedWindows = _workspaces.TryGet(move.MovedIndex)?.WindowHandles ??
+            Array.Empty<long>();
+        foreach (var handle in movedWindows)
+        {
+            var hwnd = new IntPtr(handle);
+            if (Win32.IsWindowVisible(hwnd) ||
+                !Win32.GetWindowRect(hwnd, out var rect) ||
+                (rect.Left >= workArea.X && rect.Top >= workArea.Y &&
+                 rect.Right <= workArea.Right && rect.Bottom <= workArea.Bottom))
+            {
+                continue;
+            }
+
+            Win32.SetWindowPos(
+                hwnd, IntPtr.Zero, workArea.X + 16, workArea.Y + 16, 0, 0,
+                Win32.SWP_NOSIZE | Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
+        }
+
         NotifyActiveWorkspace(target.DeviceName);
 
         if (_workspaces.TryGet(move.MovedIndex)?.FocusedWindowHandle is { } focused)
             Win32.SetForegroundWindow(new IntPtr(focused));
+
+        // The pointer follows the workspace to the display it moved to,
+        // like the workspace switch does.
+        WarpCursorToWorkspace(target.DeviceName);
     }
 
     /// <summary>
@@ -869,6 +887,14 @@ internal sealed class WindowManager : IDisposable
                 continue;
 
             var hwnd = new IntPtr(handle);
+
+            // Hidden windows (workspace members, tabs) follow their
+            // workspace, never their stale physical position: reassigning
+            // them would steal them into whatever workspace replaced the
+            // display they happen to sit on the coordinates of.
+            if (!Win32.IsWindowVisible(hwnd))
+                continue;
+
             var device = MonitorFor(hwnd).DeviceName;
             if (string.Equals(workspace.OutputName, device, StringComparison.OrdinalIgnoreCase))
                 continue;

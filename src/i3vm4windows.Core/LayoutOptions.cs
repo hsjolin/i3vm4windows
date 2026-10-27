@@ -9,5 +9,12 @@ public sealed record LayoutOptions
     /// <summary>Gap between adjacent windows inside a split.</summary>
     public int InnerGap { get; init; } = 10;
 
+    /// <summary>
+    /// The smallest width a horizontal split gives its children. When the
+    /// split can no longer fit this for every child, the children overlap
+    /// like a spread deck of cards instead of shrinking below it.
+    /// </summary>
+    public int MinWindowWidth { get; init; } = 400;
+
     public static LayoutOptions Default { get; } = new();
 }
