@@ -51,7 +51,7 @@ internal sealed class WindowManager : IDisposable
     /// handle; toggle decisions compare it with the active workspace.
     /// </summary>
     private readonly Dictionary<long, (string Output, int Index)> _scratchpadHomes = new();
-    private readonly WorkspaceIndicator _indicator = new();
+    private readonly WorkspaceBar _bar = new();
     private readonly DispatcherTimer _refreshTimer;
     private readonly uint _ownProcessId;
     private readonly Win32.WinEventDelegate _winEventDelegate;
@@ -518,10 +518,7 @@ internal sealed class WindowManager : IDisposable
 
         ApplyLayout();
 
-        // Feedback even when the switch was a no-op: the display shows which
-        // workspace is active.
-        NotifyActiveWorkspace(result.Changes[0].Output);
-
+        // The switch's effect shows through the bar's highlight.
         if (_workspaces.TryGet(index)?.FocusedWindowHandle is { } focused)
             Win32.SetForegroundWindow(new IntPtr(focused));
 
@@ -669,7 +666,7 @@ internal sealed class WindowManager : IDisposable
                 Win32.SWP_NOSIZE | Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
         }
 
-        NotifyActiveWorkspace(target.DeviceName);
+        NotifyBar(target.DeviceName);
 
         if (_workspaces.TryGet(move.MovedIndex)?.FocusedWindowHandle is { } focused)
             Win32.SetForegroundWindow(new IntPtr(focused));
@@ -680,37 +677,56 @@ internal sealed class WindowManager : IDisposable
     }
 
     /// <summary>
-    /// Shows a brief display of the workspaces bound to the output with the
-    /// active one highlighted.
+    /// Syncs the display's bar with its workspaces, as a workspace switch
+    /// or move changes what it should show.
     /// </summary>
-    private void NotifyActiveWorkspace(string deviceName)
+    private void NotifyBar(string deviceName)
     {
         if (MonitorByName(deviceName) is not { } monitor)
             return;
 
         var (workspaces, active) = WorkspaceView(deviceName);
-        _indicator.Show(deviceName, monitor.WorkArea, workspaces, active);
+        _bar.Update(deviceName, monitor.WorkArea, workspaces, active, TabsOf(deviceName));
+    }
+
+    /// <summary>
+    /// The tab titles the bar shows for the workspace: every member of
+    /// the focused window's tabbed split, the active one marked.
+    /// </summary>
+    private List<BarTab> TabsOf(string deviceName)
+    {
+        var focused = _workspaces.ActiveOn(deviceName).FocusedWindowHandle;
+        return _workspaces.TabbedWindows(deviceName)
+            .Select(handle => new BarTab(TitleOf(handle), handle == focused))
+            .ToList();
     }
 
     /// <summary>
     /// Brings every display's corner indicator in sync without announcing
     /// anything; the switches themselves announce through
-    /// <see cref="NotifyActiveWorkspace"/>.
+    /// <summary>
+    /// Brings every display's bar in sync with its workspaces.
     /// </summary>
     private void RefreshIndicators()
     {
         foreach (var monitor in _monitors.Values)
-        {
-            var (workspaces, active) = WorkspaceView(monitor.DeviceName);
-            _indicator.Update(monitor.DeviceName, monitor.WorkArea, workspaces, active);
-        }
+            NotifyBar(monitor.DeviceName);
 
-        _indicator.CloseMissing(_monitors.Values.Select(m => m.DeviceName).ToList());
+        _bar.CloseMissing(_monitors.Values.Select(m => m.DeviceName).ToList());
+    }
+
+    /// <summary>The window's title, empty when it has none.</summary>
+    private static string TitleOf(long handle)
+    {
+        var builder = new StringBuilder(512);
+        return Win32.GetWindowText(new IntPtr(handle), builder, builder.Capacity) > 0
+            ? builder.ToString()
+            : "";
     }
 
     /// <summary>
     /// The workspaces bound to the output with the active one among them,
-    /// in order — what the corner indicator displays for the display.
+    /// in order — what the bar displays for the display.
     /// </summary>
     private (IReadOnlyList<int> Workspaces, int Active) WorkspaceView(string deviceName)
     {
@@ -756,7 +772,7 @@ internal sealed class WindowManager : IDisposable
             _winEventHook = IntPtr.Zero;
         }
 
-        _indicator.Dispose();
+        _bar.Dispose();
     }
 
     private void OnWinEvent(
@@ -838,8 +854,19 @@ internal sealed class WindowManager : IDisposable
         {
             current.Add(info.Handle);
             devices.Add(info.DeviceName);
-            // Replace the entry so work areas follow resolution changes.
-            _monitors[info.Handle] = info;
+            // Replace the entry so work areas follow resolution changes,
+            // with the bar's strip taken off the top: the tiling, the
+            // indicator and everything else reads this adjusted area, and
+            // the bar itself covers the freed strip.
+            var work = info.WorkArea;
+            _monitors[info.Handle] = info with
+            {
+                WorkArea = new Rect(
+                    work.X,
+                    work.Y + WorkspaceBar.Height,
+                    work.Width,
+                    Math.Max(1, work.Height - WorkspaceBar.Height)),
+            };
         }
 
         // A display reconfiguration can transiently enumerate no displays

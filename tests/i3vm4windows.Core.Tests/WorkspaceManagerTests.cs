@@ -330,6 +330,36 @@ public sealed class WorkspaceManagerTests
     }
 
     [Fact]
+    public void TabbedWindows_ListsEveryTabWhenTabbed()
+    {
+        var manager = new WorkspaceManager();
+        manager.AddWindow(100, "a");
+        manager.AddWindow(200, "a");
+        manager.AddWindow(300, "a");
+
+        Assert.Empty(manager.TabbedWindows("a"));
+
+        manager.SetLayoutMode("a", LayoutMode.Tabbed);
+        Assert.Equal(new[] { 100L, 200L, 300L }, manager.TabbedWindows("a"));
+    }
+
+    [Fact]
+    public void FocusedIsTabbed_ReflectsTheLayoutMode()
+    {
+        var manager = new WorkspaceManager();
+        manager.AddWindow(100, "a");
+        manager.AddWindow(200, "a");
+
+        Assert.False(manager.FocusedIsTabbed("a"));
+
+        manager.SetLayoutMode("a", LayoutMode.Tabbed);
+        Assert.True(manager.FocusedIsTabbed("a"));
+
+        manager.SetLayoutMode("a", LayoutMode.Split);
+        Assert.False(manager.FocusedIsTabbed("a"));
+    }
+
+    [Fact]
     public void SetLayoutMode_Tabbed_FocusedWindowCoversTheWholeArea()
     {
         var manager = new WorkspaceManager();

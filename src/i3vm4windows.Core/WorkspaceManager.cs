@@ -260,6 +260,18 @@ public sealed class WorkspaceManager
     public void SetLayoutMode(string outputName, LayoutMode mode) =>
         _engine.SetLayoutMode(ActiveOn(outputName), mode);
 
+    /// <summary>
+    /// Whether the focused window of the output's active workspace shows
+    /// as one tab among several: the bar names the active one then.
+    /// </summary>
+    public bool FocusedIsTabbed(string outputName) =>
+        _engine.FocusedIsTabbed(ActiveOn(outputName));
+
+    /// <summary>The windows that show as tabs of the output's active
+    /// workspace, in layout order.</summary>
+    public IReadOnlyList<long> TabbedWindows(string outputName) =>
+        _engine.TabbedWindows(ActiveOn(outputName));
+
     /// <summary>Computes the layout of the output's active workspace.</summary>
     public IReadOnlyList<AssignedRect> ComputeActiveLayout(
         string outputName, Rect monitor, LayoutOptions? options = null) =>

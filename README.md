@@ -168,12 +168,6 @@ Win+L, Win+D, Win+E and Win+number taskbar activation are disabled
 can see the Win key, so mouse utilities like AltSnap must use another
 modifier (its default Alt works fine).
 
-Each display carries a persistent workspace indicator in the bottom-left
-corner of its work area: the workspaces bound to that display with the
-active one highlighted, dimmed while at rest and lighting up briefly
-whenever the active workspace changes (Win+1..9, Win+X). The indicator
-never takes focus and clicks fall through to the tiling below it.
-
 Managed windows are locked to their tiled position: moving a window (or
 maximizing it) snaps back to its rectangle, and resizing is only allowed
 along the split axis — the width in horizontal splits, the height in vertical
@@ -206,6 +200,17 @@ configuration loading (with every parse warning), hotkey dispatches, the
 win_key passthrough decision on every Win press, display changes and
 refresh failures — each line time-stamped. The tray menu's "Open log"
 opens it in your default text editor.
+
+## Bar
+
+Every display carries a bar along the top, like i3's status bar: the
+workspace numbers bound to the display with the active one highlighted,
+and — when the workspace shows tabs — every tab's window title with the
+active one highlighted, hidden tabs included. The tiling keeps its
+distance: the tiler takes the bar's strip off the top of every work
+area, and the bar floats above everything else. Maximized floating
+windows can slide under it. Configuration of the bar through the
+configuration file is on the roadmap.
 
 ## State
 

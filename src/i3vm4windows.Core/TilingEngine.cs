@@ -111,6 +111,29 @@ public sealed class TilingEngine
     }
 
     /// <summary>
+    /// Whether the focused window sits in a tabbed split: its siblings
+    /// show as tabs, so the bar names the active one.
+    /// </summary>
+    public bool FocusedIsTabbed(Workspace workspace) =>
+        workspace.FocusedWindowHandle is { } handle &&
+        Find(workspace.Root, handle)?.Parent?.Mode == LayoutMode.Tabbed;
+
+    /// <summary>
+    /// The windows that show as tabs of the focused one — the members of
+    /// its tabbed split, in layout order; an empty list when the
+    /// workspace shows no tabs.
+    /// </summary>
+    public IReadOnlyList<long> TabbedWindows(Workspace workspace)
+    {
+        if (workspace.FocusedWindowHandle is not { } handle ||
+            Find(workspace.Root, handle)?.Parent is not { } parent ||
+            parent.Mode != LayoutMode.Tabbed)
+            return Array.Empty<long>();
+
+        return parent.Windows().Select(w => w.WindowHandle).ToList();
+    }
+
+    /// <summary>
     /// Moves focus to the window <paramref name="offset"/> positions away in
     /// layout order, wrapping around at the ends.
     /// </summary>
