@@ -1,4 +1,5 @@
 using i3vm4windows.Config;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace i3vm4windows.Config.Tests;
@@ -148,19 +149,20 @@ public class I3ConfigParserTests
     }
 
     [Fact]
-    public void Non_binding_directives_are_ignored_silently()
+    public void Unknown_directives_warn()
     {
         var config = I3ConfigParser.Parse("""
             font pango:monospace 8
             gaps inner 8
-            exec --no-startup-id nm-applet
             bar {
                 status_command i3status
             }
             """);
 
         Assert.Empty(config.Bindings);
-        Assert.Empty(config.Warnings);
+        Assert.Equal(3, config.Warnings.Count);
+        Assert.Contains(config.Warnings, warning =>
+            warning.StartsWith("Unknown statement:"));
     }
 
     [Fact]
@@ -517,7 +519,42 @@ public class I3ConfigParserTests
             remap_win_key LCtrl
             """);
 
+        Assert.Equal(2, config.Warnings.Count);
+    }
+
+    [Fact]
+    public void Custom_statements_resolve_by_name_from_the_container()
+    {
+        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+        services.AddSingleton<IConfigStatement>(new LogStatement());
+        var config = I3ConfigParser.Parse("bindsym Mod4+l log everything", services);
+
+        var binding = Assert.Single(config.Bindings);
+        Assert.Equal("L", binding.Key);
+        Assert.Equal(ConfigAction.Launch, binding.Action);
+        Assert.Equal("LOG everything", binding.Command);
         Assert.Empty(config.Warnings);
+    }
+
+    /// <summary>A statement added by the caller, registered in the same
+    /// container as the built-ins and resolved by its name.</summary>
+    private sealed record LogStatement : IConfigStatement
+    {
+        public string Name => "log";
+
+        public void Execute(ConfigContext context, IReadOnlyList<string> parameters) =>
+            context.Intent = new CommandIntent(
+                Action: ConfigAction.Launch,
+                Command: "LOG " + string.Join(' ', parameters));
+    }
+
+    [Fact]
+    public void Unknown_statement_warns()
+    {
+        var config = I3ConfigParser.Parse("frobnicate loudly");
+
+        var warning = Assert.Single(config.Warnings);
+        Assert.Contains("Unknown statement", warning);
     }
 
     [Fact]
@@ -659,6 +696,6 @@ public class I3ConfigParserTests
         Assert.Equal("top", config.Bar!.Position);
         Assert.Equal(30, config.Bar!.Height);
         Assert.False(config.Bar!.Clock);
-        Assert.Equal(3, config.Warnings.Count);
+        Assert.Equal(4, config.Warnings.Count);
     }
 }

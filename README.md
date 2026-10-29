@@ -29,6 +29,14 @@ Key bindings are configured with a regular i3 configuration file:
   `bindsym <keys> <command>` directives and the `min_window_width <px>`
   layout directive. Later bindings for the same key
   combination replace earlier ones, like i3 does.
+
+The parser is built from statements: every directive (`bindsym`, `exec`,
+`set`, the bar block's, and the commands a bindsym nests — `workspace`,
+`layout`, `exec "program"`, ...) is an `IConfigStatement` resolved from
+an IoC container by name and executed with its parameters; unknown
+statements warn. A statement of your own is a class implementing
+`IConfigStatement` registered in the `IServiceCollection` passed to
+`I3ConfigParser.Parse`.
 - Bindings must include the Win key (`Mod4`): the app owns the Win key and
   dispatches combinations through its keyboard hook.
 
