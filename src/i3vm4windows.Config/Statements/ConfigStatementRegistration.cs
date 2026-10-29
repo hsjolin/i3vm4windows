@@ -19,6 +19,7 @@ public static class ConfigStatementRegistration
         services.AddSingleton<IConfigStatement, BindcodeStatement>();
         services.AddSingleton<IConfigStatement, ModeStatement>();
         services.AddSingleton<IConfigStatement, BarStatement>();
+        services.AddSingleton<IConfigStatement, CloseBlockStatement>();
         services.AddSingleton<IConfigStatement, BarPositionStatement>();
         services.AddSingleton<IConfigStatement, BarHeightStatement>();
         services.AddSingleton<IConfigStatement>(new BarFlagStatement(

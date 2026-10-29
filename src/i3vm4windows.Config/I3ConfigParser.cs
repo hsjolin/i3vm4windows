@@ -43,30 +43,20 @@ public static class I3ConfigParser
             if (tokens.Length == 0)
                 continue;
 
-            context.Line = line;
-
-            // set stores its value verbatim; variables are substituted
-            // where they are used, not on the set line itself. The
-            // closing braces of the mode and bar blocks are structural.
-            var isSet = tokens[0].Equals("set", StringComparison.OrdinalIgnoreCase);
-            var closesBlock = tokens[0] == "}" && (context.Mode is not null || context.InBar);
-
-            if (!isSet && !closesBlock)
+            // set stores its value verbatim, so its statement runs on the
+            // unsubstituted line: substituting would rewrite a variable's
+            // own name when it is redefined. Everything else resolves
+            // after substitution — the closing braces included, as the
+            // block state itself lives in the statements.
+            if (!tokens[0].Equals("set", StringComparison.OrdinalIgnoreCase))
             {
                 line = SubstituteVariables(line, context.Variables);
                 tokens = Tokenize(line);
                 if (tokens.Length == 0)
                     continue;
-
-                context.Line = line;
             }
 
-            if (closesBlock)
-            {
-                context.InBar = false;
-                context.Mode = null;
-                continue;
-            }
+            context.Line = line;
 
             var statement = context.Resolve(tokens[0]);
             if (statement is null)

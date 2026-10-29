@@ -582,6 +582,29 @@ public class I3ConfigParserTests
     }
 
     [Fact]
+    public void Stray_block_closing_warns()
+    {
+        var config = I3ConfigParser.Parse("}");
+
+        var warning = Assert.Single(config.Warnings);
+        Assert.Contains("No block to close", warning);
+    }
+
+    [Fact]
+    public void Redefined_variables_keep_their_names()
+    {
+        var config = I3ConfigParser.Parse("""
+            set $mod Mod4
+            set $mod Mod4
+            bindsym $mod+1 workspace 1
+            """);
+
+        var binding = Assert.Single(config.Bindings);
+        Assert.Equal(Modifiers.Win, binding.Modifiers);
+        Assert.Empty(config.Warnings);
+    }
+
+    [Fact]
     public void Layout_tabbed_maps_to_SetTabbed()
     {
         var config = I3ConfigParser.Parse("""
