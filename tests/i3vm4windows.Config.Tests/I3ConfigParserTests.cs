@@ -549,6 +549,30 @@ public class I3ConfigParserTests
     }
 
     [Fact]
+    public void For_window_move_scratchpad_creates_a_scratchpad_rule()
+    {
+        var config = I3ConfigParser.Parse("""
+            for_window [title="^Möteskomprimeringsvy"] move scratchpad
+            """);
+
+        var rule = Assert.Single(config.Rules);
+        Assert.Equal(WindowRuleAction.Scratchpad, rule.Action);
+        Assert.True(rule.Matches("any", "Möteskomprimeringsvy - Teams"));
+        Assert.Empty(config.Warnings);
+    }
+
+    [Fact]
+    public void Move_scratchpad_is_not_a_binding_command()
+    {
+        var config = I3ConfigParser.Parse("""
+            bindsym Mod4+m move scratchpad
+            """);
+
+        Assert.Empty(config.Bindings);
+        Assert.Single(config.Warnings);
+    }
+
+    [Fact]
     public void Unknown_statement_warns()
     {
         var config = I3ConfigParser.Parse("frobnicate loudly");

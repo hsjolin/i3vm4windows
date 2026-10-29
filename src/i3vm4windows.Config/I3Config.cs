@@ -94,6 +94,10 @@ public enum WindowRuleAction
 
     /// <summary>Matching windows join the given workspace when they appear.</summary>
     MoveToWorkspace,
+
+    /// <summary>Matching windows appear directly into the scratchpad,
+    /// hidden until a scratchpad show binding reveals them.</summary>
+    Scratchpad,
 }
 
 /// <summary>

@@ -51,6 +51,11 @@ internal sealed class WindowManager : IDisposable
     /// handle; toggle decisions compare it with the active workspace.
     /// </summary>
     private readonly Dictionary<long, (string Output, int Index)> _scratchpadHomes = new();
+    /// <summary>
+    /// The windows a for_window move scratchpad rule has already taken
+    /// (or that predate the run), so showing one never hides it again.
+    /// </summary>
+    private readonly HashSet<long> _scratchpadSeen = new();
     private readonly BarConfig _barConfig;
     private readonly WorkspaceBar _bar;
     private readonly DispatcherTimer _refreshTimer;
@@ -95,7 +100,25 @@ internal sealed class WindowManager : IDisposable
 
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
 
+        SeedScratchpadWindows();
+
         RefreshWindows();
+    }
+
+    /// <summary>
+    /// Records the windows that exist before the tiling starts: a
+    /// for_window move scratchpad rule applies to windows that appear
+    /// while the app runs, like i3's on-appear rules — never to what a
+    /// restart finds already open.
+    /// </summary>
+    private void SeedScratchpadWindows()
+    {
+        Win32.EnumWindows((hwnd, _) =>
+        {
+            if (Win32.IsWindow(hwnd))
+                _scratchpadSeen.Add(hwnd.ToInt64());
+            return true;
+        }, IntPtr.Zero);
     }
 
     /// <summary>
@@ -845,6 +868,14 @@ internal sealed class WindowManager : IDisposable
             if (!Win32.IsWindow(new IntPtr(handle)))
                 _floatedByUser.Remove(handle);
         }
+
+        // A closed scratchpad window's next life is a new window: the
+        // appearing pass takes it again.
+        foreach (var handle in _scratchpadSeen.ToList())
+        {
+            if (!Win32.IsWindow(new IntPtr(handle)))
+                _scratchpadSeen.Remove(handle);
+        }
     }
 
     /// <summary>
@@ -1009,6 +1040,17 @@ internal sealed class WindowManager : IDisposable
                 !Win32.IsWindow(hwnd))
                 return true;
 
+            // A for_window move scratchpad rule hides matching windows the
+            // moment they appear — once per window, so the scratchpad
+            // show toggle owns them after that.
+            if (!_scratchpadSeen.Contains(handle) && ScratchpadRuleFor(hwnd) is not null)
+            {
+                _scratchpadSeen.Add(handle);
+                Win32.ShowWindow(hwnd, Win32.SW_HIDE);
+                AppLog.Info($"scratchpad: 0x{handle:X} hidden as it appeared");
+                return true;
+            }
+
             if (!IsTileable(hwnd, requireVisible: true))
                 return true;
 
@@ -1040,6 +1082,22 @@ internal sealed class WindowManager : IDisposable
     /// The first for_window rule that moves this window to a workspace, if
     /// the window matches one.
     /// </summary>
+    /// <summary>
+    /// The first for_window rule that sends this window to the
+    /// scratchpad as it appears, if the window matches one.
+    /// </summary>
+    private WindowRule? ScratchpadRuleFor(IntPtr hwnd)
+    {
+        var className = new StringBuilder(256);
+        Win32.GetClassName(hwnd, className, className.Capacity);
+        var title = new StringBuilder(512);
+        Win32.GetWindowText(hwnd, title, title.Capacity);
+
+        return _rules.FirstOrDefault(rule =>
+            rule.Action == WindowRuleAction.Scratchpad &&
+            rule.Matches(className.ToString(), title.ToString()));
+    }
+
     private WindowRule? MoveRuleFor(IntPtr hwnd)
     {
         var className = new StringBuilder(256);
@@ -1176,10 +1234,12 @@ internal sealed class WindowManager : IDisposable
 
         // for_window floating rules decide first: matched windows are never
         // managed, like i3's floating enable leaves a window outside the
-        // tiling. Move rules leave discovery to assign the workspace.
+        // tiling; scratchpad rules leave the appearing pass to hide them.
+        // Move rules leave discovery to assign the workspace.
         foreach (var rule in _rules)
         {
-            if (rule.Action == WindowRuleAction.Floating &&
+            if ((rule.Action == WindowRuleAction.Floating ||
+                 rule.Action == WindowRuleAction.Scratchpad) &&
                 !ignoreFloatingRules &&
                 rule.Matches(className.ToString(), title.ToString()))
                 return false;

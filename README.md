@@ -103,6 +103,13 @@ workspace 3:
 for_window [title="Vivaldi$"] move container to workspace 3
 ```
 
+A scratchpad rule sends matching windows into the scratchpad the moment
+they appear — hidden until a `scratchpad show` binding reveals them:
+
+```i3
+for_window [title="^Möteskomprimeringsvy"] move scratchpad
+```
+
 Rules apply when a window appears (or after `Win+Y` rescan); windows that
 are already managed keep their workspace until moved by hand.
 
