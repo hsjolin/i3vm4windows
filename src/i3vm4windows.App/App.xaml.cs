@@ -135,13 +135,15 @@ public partial class App : System.Windows.Application
     /// <summary>
     /// The layout tuning the configuration controls: gaps are fixed for
     /// now, the minimum window width comes from the min_window_width
-    /// directive (400 when the configuration does not set one).
+    /// directive (400 when the configuration does not set one) and the
+    /// layout of new workspaces from workspace_layout.
     /// </summary>
     private static LayoutOptions LayoutOptionsFor(I3Config config) => new()
     {
         OuterMargin = 8,
         InnerGap = 8,
         MinWindowWidth = config.MinWindowWidth,
+        DefaultLayoutMode = config.DefaultWorkspaceLayout,
     };
 
     private void RegisterHotkeys(I3Config config)

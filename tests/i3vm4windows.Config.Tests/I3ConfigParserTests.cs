@@ -559,7 +559,6 @@ public class I3ConfigParserTests
     private sealed class RecordingRuntime(List<string> log) : IConfigRuntime
     {
         public void Launch(string command) => log.Add(command);
-
         public void FocusRelative(int offset) { }
         public void MoveRelative(int offset) { }
         public void SwitchWorkspace(int index) { }
@@ -678,6 +677,31 @@ public class I3ConfigParserTests
 
         Assert.Equal(500, config.MinWindowWidth);
         Assert.Empty(config.Warnings);
+    }
+
+    [Fact]
+    public void Workspace_layout_tabbed_sets_the_default_of_new_workspaces()
+    {
+        var config = I3ConfigParser.Parse("""
+            workspace_layout tabbed
+            bindsym Mod4+q kill
+            """);
+
+        Assert.Equal(LayoutMode.Tabbed, config.DefaultWorkspaceLayout);
+        Assert.Empty(config.Warnings);
+    }
+
+    [Fact]
+    public void Workspace_layout_defaults_to_split_and_rejects_invalid_values()
+    {
+        var withoutDirective = I3ConfigParser.Parse("""
+            bindsym Mod4+q kill
+            """);
+        Assert.Equal(LayoutMode.Split, withoutDirective.DefaultWorkspaceLayout);
+
+        var invalid = I3ConfigParser.Parse("workspace_layout stacking");
+        Assert.Equal(LayoutMode.Split, invalid.DefaultWorkspaceLayout);
+        Assert.Single(invalid.Warnings);
     }
 
     [Fact]

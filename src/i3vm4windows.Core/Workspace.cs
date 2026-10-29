@@ -14,16 +14,17 @@ public sealed class Workspace
     public string OutputName { get; set; }
 
     /// <summary>Root container for all windows in this workspace.</summary>
-    public SplitNode Root { get; } = new(SplitOrientation.Horizontal);
+    public SplitNode Root { get; }
 
     public long? FocusedWindowHandle { get; set; }
 
-    public Workspace(int index, string outputName)
+    public Workspace(int index, string outputName, LayoutMode defaultLayoutMode)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(index, 1);
         Index = index;
         Name = index.ToString();
         OutputName = outputName;
+        Root = new (SplitOrientation.Horizontal, defaultLayoutMode);
     }
 
     /// <summary>All window handles in the tree, in layout order.</summary>

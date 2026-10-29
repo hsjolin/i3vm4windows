@@ -1,3 +1,5 @@
+using i3vm4windows.Core;
+
 namespace i3vm4windows.Config;
 
 /// <summary>
@@ -73,6 +75,10 @@ public sealed class ConfigContext
     /// <summary>The smallest width a window keeps before the layout
     /// overlaps windows instead of shrinking them further.</summary>
     public int MinWindowWidth { get; set; } = 400;
+
+    /// <summary>The layout new workspaces start in (i3's
+    /// workspace_layout).</summary>
+    public LayoutMode WorkspaceLayout { get; set; } = LayoutMode.Split;
 
     /// <summary>The binding mode whose block is open, or null in the
     /// default mode.</summary>

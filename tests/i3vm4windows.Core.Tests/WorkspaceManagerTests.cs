@@ -21,6 +21,15 @@ public sealed class WorkspaceManagerTests
     }
 
     [Fact]
+    public void DefaultLayoutMode_AppliedToWorkspacesCreatedAfterwards()
+    {
+        var manager = new WorkspaceManager { DefaultLayoutMode = LayoutMode.Tabbed };
+
+        manager.SwitchTo(3, "b");
+        Assert.Equal(LayoutMode.Tabbed, manager.TryGet(3)?.Root.Mode);
+    }
+
+    [Fact]
     public void SwitchTo_NewWorkspace_CreatedOnFocusedOutput()
     {
         var manager = new WorkspaceManager();

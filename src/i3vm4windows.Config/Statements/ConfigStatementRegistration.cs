@@ -40,6 +40,7 @@ public static class ConfigStatementRegistration
         services.AddSingleton<IConfigStatement, WorkspaceStatement>();
         services.AddSingleton<IConfigStatement, ResizeStatement>();
         services.AddSingleton<IConfigStatement, ReloadStatement>();
+        services.AddSingleton<IConfigStatement, WorkspaceLayoutStatement>();
         return services;
     }
 }

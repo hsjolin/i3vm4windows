@@ -16,5 +16,11 @@ public sealed record LayoutOptions
     /// </summary>
     public int MinWindowWidth { get; init; } = 400;
 
+    /// <summary>
+    /// The layout a new workspace starts in: its root split presents the
+    /// windows as tabs (i3's workspace_layout tabbed) or tiles them.
+    /// </summary>
+    public LayoutMode DefaultLayoutMode { get; init; } = LayoutMode.Split;
+
     public static LayoutOptions Default { get; } = new();
 }

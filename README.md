@@ -155,6 +155,10 @@ overlap like a spread deck of cards instead — each window keeps the minimum
 width and shows a strip of itself to the left of the next one, the focused
 window staying on top. Stacked (vertical) splits are unaffected.
 
+Default workspace layout: `workspace_layout tabbed|default` (default
+`default`) makes every new workspace start as tabs, like the
+`layout tabbed` command applied from the start.
+
 ## Default key bindings (v0.4)
 
 Workspaces are global and each is bound to the display it was created on;

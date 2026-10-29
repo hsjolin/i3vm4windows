@@ -51,7 +51,7 @@ public sealed class SplitNode : LayoutNode
 {
     public SplitOrientation Orientation { get; set; }
 
-    public LayoutMode Mode { get; set; } = LayoutMode.Split;
+    public LayoutMode Mode { get; set; }
 
     public List<LayoutNode> Children { get; } = new();
 
@@ -62,9 +62,10 @@ public sealed class SplitNode : LayoutNode
     /// </summary>
     public double LastUsableSpan { get; internal set; }
 
-    public SplitNode(SplitOrientation orientation)
+    public SplitNode(SplitOrientation orientation, LayoutMode defaultLayoutMode)
     {
         Orientation = orientation;
+        Mode = defaultLayoutMode;
     }
 
     /// <summary>Returns all window leaves in the subtree, in layout order.</summary>

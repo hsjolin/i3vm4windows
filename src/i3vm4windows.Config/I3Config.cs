@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using i3vm4windows.Core;
 
 namespace i3vm4windows.Config;
 
@@ -87,6 +88,7 @@ public sealed record I3Config(
     IReadOnlyList<WindowRule> Rules,
     IReadOnlyList<string> Exec,
     int MinWindowWidth = 400,
+    LayoutMode DefaultWorkspaceLayout = LayoutMode.Split,
     BarConfig? Bar = null);
 
 /// <summary>What a for_window rule does with the windows it matches.</summary>

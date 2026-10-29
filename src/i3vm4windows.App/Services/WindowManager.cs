@@ -72,6 +72,7 @@ internal sealed class WindowManager : IDisposable
     {
         _rules = rules ?? Array.Empty<WindowRule>();
         _options = options ?? _options;
+        _workspaces.DefaultLayoutMode = _options.DefaultLayoutMode;
         _barConfig = bar ?? new BarConfig();
         _bar = new WorkspaceBar(_barConfig);
         _ownProcessId = (uint)Environment.ProcessId;

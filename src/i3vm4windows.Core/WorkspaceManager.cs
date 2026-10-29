@@ -30,6 +30,8 @@ public sealed class WorkspaceManager
     /// current one, for i3's workspace back_and_forth.</summary>
     private readonly Dictionary<string, int> _previousByOutput = new(StringComparer.OrdinalIgnoreCase);
     private readonly TilingEngine _engine = new();
+    
+    public LayoutMode DefaultLayoutMode { get; set; } = LayoutMode.Split;
 
     /// <summary>All known workspaces.</summary>
     public IReadOnlyCollection<Workspace> All => _workspaces.Values;
@@ -49,7 +51,7 @@ public sealed class WorkspaceManager
         ArgumentOutOfRangeException.ThrowIfLessThan(index, 1);
         if (!_workspaces.TryGetValue(index, out var workspace))
         {
-            workspace = new Workspace(index, outputName);
+            workspace = new Workspace(index, outputName, DefaultLayoutMode);
             _workspaces[index] = workspace;
         }
 
