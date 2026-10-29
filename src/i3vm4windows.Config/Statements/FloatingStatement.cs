@@ -14,7 +14,9 @@ public sealed class FloatingStatement : CommandStatement
             return;
 
         if (parameters[0].Equals("toggle", StringComparison.OrdinalIgnoreCase))
-            context.Intent = new CommandIntent(Action: ConfigAction.FloatingToggle);
+            context.Intent = new CommandIntent(
+                Action: ConfigAction.FloatingToggle,
+                Run: (runtime, _) => runtime.ToggleFloating());
         else if (parameters[0].Equals("enable", StringComparison.OrdinalIgnoreCase))
             context.Intent = new CommandIntent(Rule: WindowRuleAction.Floating);
     }

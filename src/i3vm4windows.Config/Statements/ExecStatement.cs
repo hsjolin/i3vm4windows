@@ -29,9 +29,11 @@ public sealed class ExecStatement : CommandStatement
         {
             // The program name and arguments keep their original case;
             // only the --no-startup-id marker of i3 is dropped.
+            var commandText = string.Join(' ', rest);
             context.Intent = new CommandIntent(
                 Action: ConfigAction.Launch,
-                Command: string.Join(' ', rest));
+                Command: commandText,
+                Run: (runtime, _) => runtime.Launch(commandText));
             return;
         }
 

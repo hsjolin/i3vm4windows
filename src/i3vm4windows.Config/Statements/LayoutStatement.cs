@@ -13,9 +13,13 @@ public sealed class LayoutStatement : CommandStatement
         if (parameters.Count == 1)
         {
             if (parameters[0].Equals("tabbed", StringComparison.OrdinalIgnoreCase))
-                context.Intent = new CommandIntent(Action: ConfigAction.SetTabbed);
+                context.Intent = new CommandIntent(
+                    Action: ConfigAction.SetTabbed,
+                    Run: (runtime, _) => runtime.SetTabbed());
             else if (parameters[0].Equals("default", StringComparison.OrdinalIgnoreCase))
-                context.Intent = new CommandIntent(Action: ConfigAction.SetSplit);
+                context.Intent = new CommandIntent(
+                    Action: ConfigAction.SetSplit,
+                    Run: (runtime, _) => runtime.SetSplit());
             return;
         }
 
@@ -23,7 +27,9 @@ public sealed class LayoutStatement : CommandStatement
             parameters[0].Equals("toggle", StringComparison.OrdinalIgnoreCase) &&
             parameters[1].Equals("split", StringComparison.OrdinalIgnoreCase))
         {
-            context.Intent = new CommandIntent(Action: ConfigAction.ToggleOrientation);
+            context.Intent = new CommandIntent(
+                Action: ConfigAction.ToggleOrientation,
+                Run: (runtime, _) => runtime.ToggleOrientation());
         }
     }
 }

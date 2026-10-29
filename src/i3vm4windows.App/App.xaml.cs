@@ -20,6 +20,7 @@ public partial class App : System.Windows.Application
     private WindowManager? _windowManager;
     private HotkeyHost? _hotkeyHost;
     private WinDragger? _dragger;
+    private ConfigRuntime? _runtime;
     private System.Windows.Forms.NotifyIcon? _trayIcon;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -46,6 +47,10 @@ public partial class App : System.Windows.Application
         _hotkeyHost.Start(HandleHotkey);
         RegisterHotkeys(config);
 
+        // The statements carry their own runtime behavior; this is what
+        // they execute it against.
+        _runtime = new ConfigRuntime(_windowManager, name => SetMode(name));
+
         // Win + mouse drag moves and resizes windows; only this app can
         // see the Win key, so it owns the whole gesture.
         _dragger = new WinDragger(
@@ -57,7 +62,7 @@ public partial class App : System.Windows.Application
         // i3's autostart: exec directives run when the app starts with
         // this configuration; a reload does not run them again.
         foreach (var command in config.Exec)
-            LaunchProcess(command);
+            Launcher.Start(command);
 
         _trayIcon = CreateTrayIcon();
     }
@@ -223,149 +228,14 @@ public partial class App : System.Windows.Application
 
     private void HandleHotkey(int id)
     {
-        if (_windowManager is null || !_bindings.TryGetValue(id, out var binding))
+        if (!_bindings.TryGetValue(id, out var binding))
             return;
 
         AppLog.Info($"hotkey: {binding.Action} ({binding.Key}, {binding.Mode} mode)");
 
-        switch (binding.Action)
-        {
-            case ConfigAction.FocusPrevious:
-                _windowManager.FocusRelative(-1);
-                break;
-            case ConfigAction.FocusNext:
-                _windowManager.FocusRelative(1);
-                break;
-            case ConfigAction.MovePrevious:
-                _windowManager.MoveFocused(-1);
-                break;
-            case ConfigAction.MoveNext:
-                _windowManager.MoveFocused(1);
-                break;
-            case ConfigAction.SwitchWorkspace:
-                _windowManager.SwitchWorkspace(binding.Parameter);
-                break;
-            case ConfigAction.SwitchBackAndForth:
-                _windowManager.SwitchBackAndForth();
-                break;
-            case ConfigAction.Mode:
-                SetMode(binding.Command);
-                break;
-            case ConfigAction.ResizeGrowWidth:
-                _windowManager.ResizeFocused(ResizeAxis.Width, binding.Parameter);
-                break;
-            case ConfigAction.ResizeShrinkWidth:
-                _windowManager.ResizeFocused(ResizeAxis.Width, -binding.Parameter);
-                break;
-            case ConfigAction.ResizeGrowHeight:
-                _windowManager.ResizeFocused(ResizeAxis.Height, binding.Parameter);
-                break;
-            case ConfigAction.ResizeShrinkHeight:
-                _windowManager.ResizeFocused(ResizeAxis.Height, -binding.Parameter);
-                break;
-            case ConfigAction.MoveToWorkspace:
-                _windowManager.MoveFocusedToWorkspace(binding.Parameter);
-                break;
-            case ConfigAction.ToggleOrientation:
-                _windowManager.ToggleOrientation();
-                break;
-            case ConfigAction.SetTabbed:
-                _windowManager.SetTabbed();
-                break;
-            case ConfigAction.SetSplit:
-                _windowManager.SetSplit();
-                break;
-            case ConfigAction.CloseFocused:
-                _windowManager.CloseFocused();
-                break;
-            case ConfigAction.Refresh:
-                _windowManager.RefreshWindows();
-                break;
-            case ConfigAction.MoveWorkspaceToNextMonitor:
-                _windowManager.MoveActiveWorkspaceToNextMonitor();
-                break;
-            case ConfigAction.Launch:
-                LaunchProcess(binding.Command);
-                break;
-            case ConfigAction.FloatingToggle:
-                _windowManager.ToggleFloating();
-                break;
-            case ConfigAction.ScratchpadShow:
-                if (binding.Rule is { } rule)
-                    _windowManager.ToggleScratchpad(rule);
-                break;
-        }
-    }
-
-    /// <summary>
-    /// Starts the bound program, like i3's exec: the first token names the
-    /// program and the rest are its arguments; a quoted first token carries
-    /// a path with spaces. Windows environment variables (%USERPROFILE%,
-    /// ...) and a leading ~ expand to the user profile.
-    /// </summary>
-    private static void LaunchProcess(string? command)
-    {
-        if (command is null)
-            return;
-
-        command = Environment.ExpandEnvironmentVariables(command);
-        if (command.StartsWith('~') &&
-            (command.Length == 1 || command[1] is '/' or '\\'))
-        {
-            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            command = home + command[1..].Replace('/', '\\');
-        }
-
-        var trimmed = command.Trim();
-        string fileName;
-        string arguments;
-        if (trimmed.StartsWith('"'))
-        {
-            var end = trimmed.IndexOf('"', 1);
-            if (end < 0)
-            {
-                AppLog.Warn($"unterminated program path in {command}");
-                return;
-            }
-
-            fileName = trimmed[1..end];
-            arguments = trimmed[(end + 1)..].Trim();
-
-            // A quoted first token carries a path with spaces — but when
-            // the program and its arguments ended up inside the same
-            // quotes and only the program part exists as a file, that
-            // part is the program and the rest are its arguments.
-            var space = fileName.IndexOf(' ');
-            if (space > 0 && !File.Exists(fileName))
-            {
-                var program = fileName[..space];
-                if (File.Exists(program) || File.Exists(program + ".exe"))
-                {
-                    arguments = $"{fileName[(space + 1)..]} {arguments}".Trim();
-                    fileName = program;
-                }
-            }
-        }
-        else
-        {
-            var split = trimmed.IndexOf(' ');
-            fileName = split < 0 ? trimmed : trimmed[..split];
-            arguments = split < 0 ? "" : trimmed[(split + 1)..].Trim();
-        }
-
-        try
-        {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = fileName,
-                Arguments = arguments,
-                UseShellExecute = true,
-            });
-        }
-        catch (Exception error)
-        {
-            AppLog.Warn($"cannot start {fileName}: {error.Message}");
-        }
+        // The command's own statement parsed its behavior; running it is
+        // all the app does here.
+        binding.Run?.Invoke(_runtime!, binding.Rule);
     }
 
     private System.Windows.Forms.NotifyIcon CreateTrayIcon()

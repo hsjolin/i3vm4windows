@@ -46,10 +46,12 @@ public enum ConfigAction
 /// A bindsym entry: the key combination and the action it triggers. The key
 /// is normalized (canonical names, upper-case letters, digits);
 /// <paramref name="Command"/> carries the program for Launch bindings, the
-/// mode name for Mode bindings and the canonical key combination for Emit
-/// bindings; <paramref name="Rule"/> targets windows for criteria commands
-/// like scratchpad show; <paramref name="Mode"/> names the binding mode
-/// the binding lives in ("default" outside mode blocks).
+/// mode name for Mode bindings;
+/// <paramref name="Rule"/> targets windows for criteria commands like
+/// scratchpad show; <paramref name="Mode"/> names the binding mode
+/// the binding lives in ("default" outside mode blocks); and
+/// <paramref name="Run"/> is the parsed command's runtime behavior,
+/// executed against the runtime when the binding fires.
 /// </summary>
 public sealed record Binding(
     Modifiers Modifiers,
@@ -58,7 +60,8 @@ public sealed record Binding(
     int Parameter,
     string? Command = null,
     WindowRule? Rule = null,
-    string Mode = "default");
+    string Mode = "default",
+    Action<IConfigRuntime, WindowRule?>? Run = null);
 
 /// <summary>
 /// The bar's configuration, from the bar block of the configuration

@@ -103,6 +103,6 @@ public sealed class BindsymStatement : TopLevelStatement
         context.Bindings[(context.Mode ?? "default", modifiers, key)] =
             new Binding(
                 modifiers, key, action, intent.Parameter, intent.Command, rule,
-                context.Mode ?? "default");
+                context.Mode ?? "default", intent.Run);
     }
 }

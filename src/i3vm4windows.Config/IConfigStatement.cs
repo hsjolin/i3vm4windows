@@ -23,13 +23,17 @@ public interface IConfigStatement
 /// <summary>
 /// The outcome of a command statement, collected by the statement that
 /// resolves it: the action a binding triggers, or the rule a for_window
-/// directive builds.
+/// directive builds — and the command's runtime behavior, which the
+/// statement that parsed it owns: the Run delegate executes against the
+/// runtime, with the binding's criteria-carrying rule as its second
+/// argument.
 /// </summary>
 public sealed record CommandIntent(
     ConfigAction? Action = null,
     WindowRuleAction? Rule = null,
     int Parameter = 0,
-    string? Command = null);
+    string? Command = null,
+    Action<IConfigRuntime, WindowRule?>? Run = null);
 
 /// <summary>
 /// Everything one parse accumulates: the bindings, rules, autostarts

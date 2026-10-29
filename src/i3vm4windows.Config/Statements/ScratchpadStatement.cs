@@ -11,7 +11,13 @@ public sealed class ScratchpadStatement : CommandStatement
         if (parameters.Count == 1 &&
             parameters[0].Equals("show", StringComparison.OrdinalIgnoreCase))
         {
-            context.Intent = new CommandIntent(Action: ConfigAction.ScratchpadShow);
+            context.Intent = new CommandIntent(
+                Action: ConfigAction.ScratchpadShow,
+                Run: (runtime, rule) =>
+                {
+                    if (rule is not null)
+                        runtime.ToggleScratchpad(rule);
+                });
         }
     }
 }

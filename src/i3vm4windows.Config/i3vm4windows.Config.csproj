@@ -9,4 +9,8 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\i3vm4windows.Core\i3vm4windows.Core.csproj" />
+  </ItemGroup>
+
 </Project>

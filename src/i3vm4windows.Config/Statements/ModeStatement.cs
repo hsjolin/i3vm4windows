@@ -26,8 +26,11 @@ public sealed class ModeStatement : CommandStatement
 
         if (parameters.Count == 1)
         {
+            var name = parameters[0].Trim('"');
             context.Intent = new CommandIntent(
-                Action: ConfigAction.Mode, Command: parameters[0].Trim('"'));
+                Action: ConfigAction.Mode,
+                Command: name,
+                Run: (runtime, _) => runtime.SetMode(name));
             return;
         }
 

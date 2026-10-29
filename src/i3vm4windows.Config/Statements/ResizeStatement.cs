@@ -1,3 +1,5 @@
+using i3vm4windows.Core;
+
 namespace i3vm4windows.Config.Statements;
 
 /// <summary>
@@ -20,6 +22,9 @@ public sealed class ResizeStatement : CommandStatement
             Action: grow
                 ? width ? ConfigAction.ResizeGrowWidth : ConfigAction.ResizeGrowHeight
                 : width ? ConfigAction.ResizeShrinkWidth : ConfigAction.ResizeShrinkHeight,
-            Parameter: amount);
+            Parameter: amount,
+            Run: (runtime, _) => runtime.ResizeFocused(
+                width ? ResizeAxis.Width : ResizeAxis.Height,
+                grow ? amount : -amount));
     }
 }

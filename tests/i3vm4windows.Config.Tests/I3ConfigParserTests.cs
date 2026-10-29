@@ -1,4 +1,5 @@
 using i3vm4windows.Config;
+using i3vm4windows.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -534,6 +535,11 @@ public class I3ConfigParserTests
         Assert.Equal(ConfigAction.Launch, binding.Action);
         Assert.Equal("LOG everything", binding.Command);
         Assert.Empty(config.Warnings);
+
+        // The statement owns the behavior its binding runs.
+        var log = new List<string>();
+        binding.Run?.Invoke(new RecordingRuntime(log), null);
+        Assert.Equal(new[] { "LOG everything" }, log);
     }
 
     /// <summary>A statement added by the caller, registered in the same
@@ -545,7 +551,30 @@ public class I3ConfigParserTests
         public void Execute(ConfigContext context, IReadOnlyList<string> parameters) =>
             context.Intent = new CommandIntent(
                 Action: ConfigAction.Launch,
-                Command: "LOG " + string.Join(' ', parameters));
+                Command: "LOG " + string.Join(' ', parameters),
+                Run: (runtime, _) => runtime.Launch("LOG " + string.Join(' ', parameters)));
+    }
+
+    /// <summary>The runtime a test can observe.</summary>
+    private sealed class RecordingRuntime(List<string> log) : IConfigRuntime
+    {
+        public void Launch(string command) => log.Add(command);
+
+        public void FocusRelative(int offset) { }
+        public void MoveRelative(int offset) { }
+        public void SwitchWorkspace(int index) { }
+        public void SwitchBackAndForth() { }
+        public void MoveFocusedToWorkspace(int index) { }
+        public void MoveActiveWorkspaceToNextMonitor() { }
+        public void ToggleOrientation() { }
+        public void SetTabbed() { }
+        public void SetSplit() { }
+        public void CloseFocused() { }
+        public void Refresh() { }
+        public void ToggleFloating() { }
+        public void ToggleScratchpad(WindowRule rule) { }
+        public void ResizeFocused(ResizeAxis axis, int delta) { }
+        public void SetMode(string name) { }
     }
 
     [Fact]

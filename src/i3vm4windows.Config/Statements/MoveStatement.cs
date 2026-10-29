@@ -20,13 +20,17 @@ public sealed class MoveStatement : CommandStatement
 
         if (parameters.Count == 1 && parameters[0].Equals("left", StringComparison.OrdinalIgnoreCase))
         {
-            context.Intent = new CommandIntent(Action: ConfigAction.MovePrevious);
+            context.Intent = new CommandIntent(
+                Action: ConfigAction.MovePrevious,
+                Run: (runtime, _) => runtime.MoveRelative(-1));
             return;
         }
 
         if (parameters.Count == 1 && parameters[0].Equals("right", StringComparison.OrdinalIgnoreCase))
         {
-            context.Intent = new CommandIntent(Action: ConfigAction.MoveNext);
+            context.Intent = new CommandIntent(
+                Action: ConfigAction.MoveNext,
+                Run: (runtime, _) => runtime.MoveRelative(1));
             return;
         }
 
@@ -38,7 +42,9 @@ public sealed class MoveStatement : CommandStatement
             ConfigGrammar.TryParseWorkspace(string.Join(' ', ConfigGrammar.Rest(parameters, 3)), out var workspace))
         {
             context.Intent = new CommandIntent(
-                Action: ConfigAction.MoveToWorkspace, Parameter: workspace);
+                Action: ConfigAction.MoveToWorkspace,
+                Parameter: workspace,
+                Run: (runtime, _) => runtime.MoveFocusedToWorkspace(workspace));
             return;
         }
 
@@ -48,7 +54,9 @@ public sealed class MoveStatement : CommandStatement
             ConfigGrammar.TryParseWorkspace(string.Join(' ', ConfigGrammar.Rest(parameters, 2)), out var shortWorkspace))
         {
             context.Intent = new CommandIntent(
-                Action: ConfigAction.MoveToWorkspace, Parameter: shortWorkspace);
+                Action: ConfigAction.MoveToWorkspace,
+                Parameter: shortWorkspace,
+                Run: (runtime, _) => runtime.MoveFocusedToWorkspace(shortWorkspace));
             return;
         }
 
@@ -58,7 +66,9 @@ public sealed class MoveStatement : CommandStatement
             parameters[2].Equals("output", StringComparison.OrdinalIgnoreCase) &&
             parameters[3].Equals("next", StringComparison.OrdinalIgnoreCase))
         {
-            context.Intent = new CommandIntent(Action: ConfigAction.MoveWorkspaceToNextMonitor);
+            context.Intent = new CommandIntent(
+                Action: ConfigAction.MoveWorkspaceToNextMonitor,
+                Run: (runtime, _) => runtime.MoveActiveWorkspaceToNextMonitor());
         }
     }
 }

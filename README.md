@@ -36,7 +36,11 @@ The parser is built from statements: every directive (`bindsym`, `exec`,
 an IoC container by name and executed with its parameters; unknown
 statements warn. A statement of your own is a class implementing
 `IConfigStatement` registered in the `IServiceCollection` passed to
-`I3ConfigParser.Parse`.
+`I3ConfigParser.Parse`. Command statements also own their runtime
+behavior: parsing captures it as a `Run` delegate in the binding, and
+when the hotkey fires the app hands it an `IConfigRuntime` — the window
+manager, the binding modes and the process launcher behind one
+interface.
 - Bindings must include the Win key (`Mod4`): the app owns the Win key and
   dispatches combinations through its keyboard hook.
 

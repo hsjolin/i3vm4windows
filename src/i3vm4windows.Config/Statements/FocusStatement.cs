@@ -12,8 +12,12 @@ public sealed class FocusStatement : CommandStatement
 
         context.Intent = parameters[0].ToLowerInvariant() switch
         {
-            "left" => new CommandIntent(Action: ConfigAction.FocusPrevious),
-            "right" => new CommandIntent(Action: ConfigAction.FocusNext),
+            "left" => new CommandIntent(
+                Action: ConfigAction.FocusPrevious,
+                Run: (runtime, _) => runtime.FocusRelative(-1)),
+            "right" => new CommandIntent(
+                Action: ConfigAction.FocusNext,
+                Run: (runtime, _) => runtime.FocusRelative(1)),
             _ => null,
         };
     }

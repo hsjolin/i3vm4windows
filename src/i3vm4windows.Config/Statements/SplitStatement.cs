@@ -10,7 +10,9 @@ public sealed class SplitStatement : CommandStatement
         if (parameters.Count == 1 &&
             parameters[0].Equals("toggle", StringComparison.OrdinalIgnoreCase))
         {
-            context.Intent = new CommandIntent(Action: ConfigAction.ToggleOrientation);
+            context.Intent = new CommandIntent(
+                Action: ConfigAction.ToggleOrientation,
+                Run: (runtime, _) => runtime.ToggleOrientation());
         }
     }
 }

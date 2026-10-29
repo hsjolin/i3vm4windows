@@ -8,6 +8,8 @@ public sealed class ReloadStatement : CommandStatement
     public override void Execute(ConfigContext context, IReadOnlyList<string> parameters)
     {
         if (parameters.Count == 0)
-            context.Intent = new CommandIntent(Action: ConfigAction.Refresh);
+            context.Intent = new CommandIntent(
+                Action: ConfigAction.Refresh,
+                Run: (runtime, _) => runtime.Refresh());
     }
 }

@@ -13,7 +13,9 @@ public sealed class WorkspaceStatement : CommandStatement
         if (parameters.Count == 1 &&
             parameters[0].Equals("back_and_forth", StringComparison.OrdinalIgnoreCase))
         {
-            context.Intent = new CommandIntent(Action: ConfigAction.SwitchBackAndForth);
+            context.Intent = new CommandIntent(
+                Action: ConfigAction.SwitchBackAndForth,
+                Run: (runtime, _) => runtime.SwitchBackAndForth());
             return;
         }
 
@@ -22,7 +24,9 @@ public sealed class WorkspaceStatement : CommandStatement
             ConfigGrammar.TryParseWorkspace(string.Join(' ', parameters), out var workspace))
         {
             context.Intent = new CommandIntent(
-                Action: ConfigAction.SwitchWorkspace, Parameter: workspace);
+                Action: ConfigAction.SwitchWorkspace,
+                Parameter: workspace,
+                Run: (runtime, _) => runtime.SwitchWorkspace(workspace));
         }
     }
 }
